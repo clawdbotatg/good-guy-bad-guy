@@ -12,7 +12,7 @@ import UIKit
 /// brain can't reach the service, and the app falls back to local brains.
 /// Rotate it in the server's `.env` + the build arg.
 enum CloudConfig {
-    static let baseURL = URL(string: "https://h.atg.link/ggbg")!
+    static let baseURL = URL(string: "https://ggbg.atg.link")!
     static var token: String {
         (Bundle.main.object(forInfoDictionaryKey: "GGBGCloudToken") as? String) ?? ""
     }
