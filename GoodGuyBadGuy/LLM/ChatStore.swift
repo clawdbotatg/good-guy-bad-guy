@@ -1,44 +1,56 @@
+import CoreImage
 import Foundation
 import UIKit
 
-/// Owns the model lifecycle (download → load → chat) and the message list
-/// the UI renders. The actual generation backend is an `LLMEngine`:
-/// MLX on device, a mock in the simulator.
+/// Coarse state of the *selected* brain, for the UI's content gate: photos can
+/// only be answered when the brain is `.ready` (there is no network fallback —
+/// the app is fully on-device).
+enum ModelState: Equatable {
+    case idle
+    /// Downloading or loading, with progress 0...1.
+    case downloading(Double)
+    case ready
+    case failed(String)
+}
+
+/// Owns the model lifecycle and the message list the UI renders.
+///
+/// **Brains prepare in the background.** On-device downloads run through a
+/// **serial queue** — one at a time, because two multi-GB fetches only
+/// throttle each other and MLX can hold just one model in memory. Tapping any
+/// brain is always allowed, even mid-download; it becomes the selection and
+/// joins the queue.
 @Observable
 @MainActor
 final class ChatStore {
-    enum ModelState: Equatable {
-        case idle
-        case downloading(Double)  // 0...1 fraction of the weights download
-        case ready
-        case failed(String)
-    }
-
-    private(set) var modelState: ModelState = .idle
     private(set) var messages: [ChatMessage] = []
     private(set) var isGenerating = false
 
-    /// Which brain is selected, and which have finished downloading at least
-    /// once (persisted, so the UI can show "downloaded" vs "download" and a
-    /// re-select loads from cache instead of re-fetching).
+    /// The selected brain (what answers photos) and which brains have finished
+    /// downloading at least once (persisted, so a re-select loads from the
+    /// on-disk cache instead of re-fetching).
     private(set) var currentModelID: String
     private(set) var downloadedModelIDs: Set<String>
 
-    /// Two backends: the cloud classifier (default) and the on-device model.
-    /// `engine` is whichever the selected brain routes to.
-    private let cloudEngine: LLMEngine = CloudEngine()
-    private let localEngine: LLMEngine
-    private var engine: LLMEngine {
-        BrainCatalog.isCloud(currentModelID) ? cloudEngine : localEngine
-    }
-    private var generationTask: Task<Void, Never>?
+    /// Per-brain download/load progress (0...1) while a brain is being
+    /// prepared. Absent = not in flight. A queued-but-not-started brain sits at
+    /// 0 until the worker reaches it.
+    private(set) var prepareProgress: [String: Double] = [:]
+    /// Brains whose most recent prepare attempt failed, with the error text
+    /// (offer a retry).
+    private(set) var failureMessages: [String: String] = [:]
+    /// Which brain is actually loaded in the MLX engine right now (nil if
+    /// none, or if a background prepare of a different brain evicted it).
+    private(set) var loadedModelID: String?
 
-    /// Raw fraction reported by the loader, and a time-based sweep over it.
-    /// The weights are one giant file, so the real fraction can sit near 1%
-    /// for minutes; the sweep keeps the Brain's progress visibly alive.
-    private var realFraction: Double = 0
-    private var downloadStart: Date?
-    private var sweepTask: Task<Void, Never>?
+    private let engine: LLMEngine
+
+    /// Serial prepare queue: brain ids waiting to download/load, plus the one
+    /// in flight. Only one runs at a time.
+    private var prepareQueue: [String] = []
+    private var preparing: String?
+    private var workerRunning = false
+    private var generationTask: Task<Void, Never>?
 
     private static let modelKey = "brain.currentModelID"
     private static let downloadedKey = "brain.downloadedModelIDs"
@@ -52,110 +64,134 @@ final class ChatStore {
         downloadedModelIDs = Set(defaults.stringArray(forKey: Self.downloadedKey) ?? [])
 
         #if targetEnvironment(simulator)
-        localEngine = MockEngine()
+        engine = MockEngine()
         #else
-        localEngine = MLXEngine()
+        engine = MLXEngine()
         #endif
-        configureEngine(for: currentModelID)
-    }
-
-    /// Point the selected brain's engine at the right model: a local brain sets
-    /// the MLX repo id; a cloud brain sets the server model the classifier runs.
-    private func configureEngine(for id: String) {
-        let model = BrainCatalog.model(for: id)
-        if model.isCloud {
-            cloudEngine.setModel(model.serverModel ?? "claude")
-        } else {
-            localEngine.setModel(id)
-        }
     }
 
     var availableModels: [BrainModel] { BrainCatalog.all }
     var currentModel: BrainModel { BrainCatalog.model(for: currentModelID) }
     var modelName: String { currentModel.name }
 
-    func loadModel() async {
-        guard modelState != .ready else { return }
-        realFraction = 0
-        downloadStart = Date()
-        modelState = .downloading(0)
-        startSweep()
-        // If the screen auto-locks mid-download iOS suspends the app and the
-        // download stalls, so keep the screen awake until the model is ready.
-        UIApplication.shared.isIdleTimerDisabled = true
-        defer {
-            UIApplication.shared.isIdleTimerDisabled = false
-            stopSweep()
-        }
-        do {
-            try await engine.load { fraction in
-                self.realFraction = fraction
-            }
-            modelState = .ready
-            markDownloaded(currentModelID)
-        } catch {
-            modelState = .failed(error.localizedDescription)
-        }
+    /// State of the selected brain, driving the content area.
+    var modelState: ModelState {
+        if loadedModelID == currentModelID { return .ready }
+        if let fraction = prepareProgress[currentModelID] { return .downloading(fraction) }
+        if let message = failureMessages[currentModelID] { return .failed(message) }
+        return .idle
     }
 
-    /// Ticks the displayed download fraction: `max(real, time-based sweep)`,
-    /// capped at 99% until the load actually completes.
-    private func startSweep() {
-        sweepTask?.cancel()
-        sweepTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                let elapsed = self.downloadStart.map { Date().timeIntervalSince($0) } ?? 0
-                let sweep =
-                    elapsed < 60
-                    ? elapsed / 60 * 0.90
-                    : 0.90 + min((elapsed - 60) / 300, 1) * 0.09
-                let shown = min(max(self.realFraction, sweep), 0.99)
-                if case .downloading = self.modelState {
-                    self.modelState = .downloading(shown)
-                }
-                try? await Task.sleep(for: .milliseconds(250))
-            }
-        }
+    /// True while any brain is downloading/loading (BrainView shows progress).
+    var isPreparing: Bool { preparing != nil }
+
+    /// Kicked off on appear: start preparing the selected brain (download it
+    /// if it isn't cached yet; load it if it is).
+    func activate() {
+        prepare(currentModelID)
     }
 
-    private func stopSweep() {
-        sweepTask?.cancel()
-        sweepTask = nil
-    }
+    // MARK: - brain selection (never blocks)
 
-    /// Switch brains: reload the model and start a fresh scan (a new brain
-    /// shouldn't answer follow-ups about the old one's verdict).
+    /// Switch brains. Always allowed — even while another brain downloads. The
+    /// new pick becomes current immediately and joins the prepare queue.
     func selectModel(_ id: String) {
-        guard id != currentModelID, !id.isEmpty, !isDownloading else { return }
+        guard id != currentModelID, !id.isEmpty else { return }
         DebugLog.log("selectModel: \(currentModelID) -> \(id)")
         currentModelID = id
         UserDefaults.standard.set(id, forKey: Self.modelKey)
         clear()
-        configureEngine(for: id)
-        modelState = .idle
-        Task { await loadModel() }
+        prepare(id)
     }
 
-    var isDownloading: Bool {
-        if case .downloading = modelState { return true }
-        return false
+    /// Explicitly (re)download a brain without necessarily using it — the
+    /// row's download button, and the failure screen's Retry. Same queue;
+    /// doesn't change the selection.
+    func downloadModel(_ id: String) {
+        prepare(id)
     }
 
-    /// Cloud needs no download; treat it as always "ready to use".
-    func isDownloaded(_ id: String) -> Bool {
-        BrainCatalog.isCloud(id) || downloadedModelIDs.contains(id)
+    /// Ensure a brain is on its way to ready: enqueue a background prepare
+    /// (download if missing, else a fast load from cache) unless it's already
+    /// the loaded/in-flight one.
+    private func prepare(_ id: String) {
+        if loadedModelID == id, preparing == nil { return }  // already ready
+        enqueuePrepare(id)
     }
 
-    private func markDownloaded(_ id: String) {
-        downloadedModelIDs.insert(id)
-        UserDefaults.standard.set(
-            Array(downloadedModelIDs), forKey: Self.downloadedKey)
+    private func enqueuePrepare(_ id: String) {
+        guard preparing != id, !prepareQueue.contains(id) else { return }
+        if !downloadedModelIDs.contains(id) { prepareProgress[id] = 0 }
+        prepareQueue.append(id)
+        startWorker()
     }
+
+    private func startWorker() {
+        guard !workerRunning else { return }
+        workerRunning = true
+        Task { await runWorker() }
+    }
+
+    /// Process the queue one brain at a time. Each prepare downloads (if
+    /// needed) then loads the brain into MLX — so the *last* one prepared is
+    /// what's resident. Because the current selection is always enqueued last
+    /// (it's the most recent tap), it normally ends up the loaded one; if a
+    /// later background prepare of a different brain evicted it, the tail
+    /// check reloads it.
+    private func runWorker() async {
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            UIApplication.shared.isIdleTimerDisabled = false
+            workerRunning = false
+        }
+        while !prepareQueue.isEmpty {
+            let id = prepareQueue.removeFirst()
+            preparing = id
+            failureMessages[id] = nil
+            let cached = downloadedModelIDs.contains(id)
+            if prepareProgress[id] == nil { prepareProgress[id] = cached ? 0.9 : 0 }
+            engine.setModel(id)
+            do {
+                try await engine.load { frac in self.prepareProgress[id] = frac }
+                downloadedModelIDs.insert(id)
+                persistDownloaded()
+                loadedModelID = id
+            } catch {
+                DebugLog.log("prepare failed \(id): \(error)")
+                failureMessages[id] = error.localizedDescription
+                if loadedModelID == id { loadedModelID = nil }
+            }
+            prepareProgress[id] = nil
+            preparing = nil
+        }
+        // Make sure the brain the user actually has selected ends up resident,
+        // in case pre-staging another brain evicted it.
+        if downloadedModelIDs.contains(currentModelID),
+            loadedModelID != currentModelID
+        {
+            enqueuePrepare(currentModelID)
+        }
+    }
+
+    private func persistDownloaded() {
+        UserDefaults.standard.set(Array(downloadedModelIDs), forKey: Self.downloadedKey)
+    }
+
+    // MARK: - status the UI reads
+
+    func isDownloaded(_ id: String) -> Bool { downloadedModelIDs.contains(id) }
+
+    /// Fraction (0...1) while a brain is downloading/loading, else nil.
+    func prepareFraction(_ id: String) -> Double? { prepareProgress[id] }
+
+    func isCurrent(_ id: String) -> Bool { id == currentModelID }
+    func didFail(_ id: String) -> Bool { failureMessages[id] != nil }
+
+    // MARK: - conversation
 
     func send(_ text: String, image: UIImage? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard modelState == .ready, !isGenerating, !trimmed.isEmpty || image != nil else { return }
+        guard !isGenerating, !trimmed.isEmpty || image != nil else { return }
         let prompt = trimmed.isEmpty ? "Good guy or bad guy?" : trimmed
 
         messages.append(ChatMessage(role: .user, text: prompt, image: image))
@@ -163,7 +199,7 @@ final class ChatStore {
         let index = messages.count - 1
         isGenerating = true
         let ciImage = image.flatMap { CIImage(image: $0) }
-        DebugLog.log("send: \"\(prompt)\"\(image != nil ? " +image" : "")")
+        DebugLog.log("send: \"\(prompt)\"\(image != nil ? " +image" : "") via \(engine.modelName)")
 
         generationTask = Task {
             do {
@@ -185,7 +221,7 @@ final class ChatStore {
         generationTask?.cancel()
     }
 
-    /// New conversation: drop UI messages and the engine's history state.
+    /// New conversation: drop UI messages and the engine's history.
     func clear() {
         stopGenerating()
         messages.removeAll()

@@ -136,7 +136,7 @@ CASES = [
     ("Easter lilies", "plant", "BAD", "plural of a multi-word alias"),
     ("Peace lily", "plant", "CAUTION", "not a true lily: specificity must beat severity"),
     ("Wolf spider", "spider", "GOOD", "must not match the 'wolf' mammal entry"),
-    # THE look-alike test: a real venomous coral snake photo made the cloud
+    # THE look-alike test: a real venomous coral snake photo made the model
     # say "coral snake or scarlet kingsnake" and the table called it GOOD GUY.
     # Naming a deadly species and its harmless mimic must be CAUTION, never GOOD.
     ("coral snake or scarlet kingsnake (Micrurus sp. or Lampropeltis elapsoides)", "snake",

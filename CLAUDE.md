@@ -70,36 +70,15 @@ or matcher change**, and add the case that motivated your change.
 Keep the fork lean: if a change isn't about photo→verdict, it probably
 belongs in the parent repo instead.
 
-## Cloud brain (default) + the classifier service
+## Fully on-device — no cloud, ever
 
-The default brain is **Cloud** (`BrainCatalog.cloudID`), routed to
-`CloudEngine` instead of MLX. It POSTs the photo (JPEG, long edge ≤1024,
-`X-Auth-Token`) to **`https://h.atg.link/ggbg/classify`** and renders the
-reply with the exact same `ID:` / `VERDICT:` text the local path produces —
-so the UI is identical no matter which brain answered. `load()` for cloud is
-a `/health` probe, not a download; offline → a failure that tells the user to
-pick a local brain. `ChatStore` holds both a `cloudEngine` and a `localEngine`
-and routes by `currentModelID`. Local brains stay downloadable fallbacks that
-work with no signal.
-
-The service is **`server/`** (its own README): a stdlib HTTP server on the
-`zkllmapi` box, reached via an nginx `location /ggbg/` → `127.0.0.1:41821`
-(added to `sites-enabled/h.atg.link`, valid Let's Encrypt cert, so iOS ATS is
-happy — no new port opened to the internet). It runs `claude -p` on the box's
-Claude subscription (free, frontier-quality) to name the organism, then
-`server/danger.py` (which reads THIS repo's `DangerData.swift` — one source of
-truth) applies the authoritative verdict. Systemd unit `ggbg-classifier`;
-token + `DEBUG_STORE` in a gitignored `.env`. **The cloud token in the app
-binary is a soft gate** — rotate it in the server `.env` + `CloudConfig` if
-abused.
-
-## Roadmap: online as a bonus, never a dependency
-
-Offline is the product. The clean seam for online work is
-`DangerTable.verdict` — an online enhancer would run *after* it (richer
-species ID, regional priors from `get_location`, a frontier-model second
-opinion) and may only **narrow or escalate** a verdict, never downgrade a
-BAD/CAUTION to GOOD without curated backing.
+There was briefly a cloud brain (a classifier service on a personal box)
+routed from the app; it was **removed entirely in 2026-07** for the App Store
+release — the app is 100% on-device and offline, and that's the product.
+**Do not reintroduce any network path for identification or verdicts.** The
+only acceptable seam for future enrichment remains `DangerTable.verdict`
+running on curated local data — anything that could downgrade a BAD/CAUTION
+to GOOD must have curated backing shipped in the app.
 
 ## Build / deploy loop (all CLI, no Xcode GUI)
 
@@ -114,12 +93,9 @@ Identical to the parent — same device, same team, same flags:
 - **Device build**: `xcodebuild -project GoodGuyBadGuy.xcodeproj -scheme
   GoodGuyBadGuy -destination 'generic/platform=iOS' -derivedDataPath build
   -skipPackagePluginValidation -skipMacroValidation -allowProvisioningUpdates
-  DEVELOPMENT_TEAM=XX7QP5899Z GGBG_CLOUD_TOKEN=ggbg_… build`
+  DEVELOPMENT_TEAM=XX7QP5899Z build`
   (the two -skip flags are required headless: mlx-swift's CudaBuild plugin and
-  the `#huggingFaceLoadModelContainer` macro can't show their trust prompts.
-  `GGBG_CLOUD_TOKEN` injects the cloud service token into Info.plist — it is
-  never in git; omit it and the cloud brain just can't reach the service. The
-  live token is in the box's `server/.env`.).
+  the `#huggingFaceLoadModelContainer` macro can't show their trust prompts).
 - **Install + launch**: `xcrun devicectl device install app --device
   8B053FBC-B638-548F-B045-F5DDE25D3BDD <path>.app` then
   `… device process launch --terminate-existing --device <udid>

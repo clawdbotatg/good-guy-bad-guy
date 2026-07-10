@@ -103,7 +103,7 @@ struct BrainView: View {
                                 .foregroundStyle(.yellow)
                         }
                     }
-                    Text("\(model.brainRating) \(model.locationIcon)").font(.caption)
+                    Text(model.brainRating).font(.caption)
                 }
                 .lineLimit(1)
                 Spacer()
@@ -113,12 +113,13 @@ struct BrainView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(store.isDownloading && !isCurrent)
     }
 
     @ViewBuilder
     private func trailing(for model: BrainModel, isCurrent: Bool) -> some View {
-        if isCurrent, case .downloading(let fraction) = store.modelState {
+        // Per-brain progress: downloads run one at a time, but any queued row
+        // shows where it is (0% until the worker reaches it).
+        if let fraction = store.prepareFraction(model.id) {
             VStack(alignment: .trailing, spacing: 2) {
                 ProgressView(value: max(fraction, 0.02))
                     .frame(width: 56)
@@ -132,17 +133,15 @@ struct BrainView: View {
                 .foregroundStyle(.tint)
         } else {
             VStack(alignment: .trailing, spacing: 2) {
-                let actionStyle: AnyShapeStyle =
-                    store.isDownloading ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint)
                 if store.isDownloaded(model.id) {
                     Text("Use")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(actionStyle)
+                        .foregroundStyle(.tint)
                 } else {
                     Label("Download", systemImage: "arrow.down.circle")
                         .labelStyle(.iconOnly)
                         .font(.title3)
-                        .foregroundStyle(actionStyle)
+                        .foregroundStyle(.tint)
                 }
                 Text(model.sizeText)
                     .font(.caption2)

@@ -23,7 +23,7 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task {
-            await store.loadModel()
+            store.activate()
             // Demo hook for automated simulator screenshots: launch with
             // SIMCTL_CHILD_GGBG_DEMO=1 to auto-send a photo so the verdict
             // renders without driving taps.
@@ -216,19 +216,14 @@ struct ChatView: View {
         VStack(spacing: 12) {
             Spacer()
             ProgressView()
-            let isCloud = BrainCatalog.isCloud(store.currentModelID)
             Text(
-                isCloud
-                    ? "Connecting to the cloud…"
-                    : store.isDownloaded(store.currentModelID)
-                        ? "Waking up \(store.modelName)…"
-                        : "Downloading \(store.modelName)…"
+                store.isDownloaded(store.currentModelID)
+                    ? "Waking up \(store.modelName)…"
+                    : "Downloading \(store.modelName)…"
             )
             .font(.headline)
             Text(
-                isCloud
-                    ? "Instant answers over the internet — no download. Add a local brain to work offline."
-                    : "First time takes a few minutes on Wi-Fi. After that it's instant and works with no signal."
+                "First time takes a few minutes on Wi-Fi. After that it's instant and works with no signal."
             )
             .font(.footnote)
             .foregroundStyle(.secondary)
@@ -252,7 +247,7 @@ struct ChatView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Button("Retry") {
-                Task { await store.loadModel() }
+                store.downloadModel(store.currentModelID)
             }
             .buttonStyle(.borderedProminent)
             Spacer()

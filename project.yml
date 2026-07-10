@@ -56,11 +56,6 @@ targets:
           Lets the identifier narrow species down by region (a "brown snake"
           means different things in Texas vs. Australia). Location never
           leaves your phone.
-        # Cloud classifier token, injected from the GGBG_CLOUD_TOKEN build
-        # setting so the secret is never committed. Empty default → the cloud
-        # brain is unreachable and the app falls back to local brains. Set it
-        # on the build: `xcodebuild … GGBG_CLOUD_TOKEN=ggbg_…`.
-        GGBGCloudToken: $(GGBG_CLOUD_TOKEN)
     entitlements:
       path: GoodGuyBadGuy/GoodGuyBadGuy.entitlements
       properties:
@@ -75,6 +70,3 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: 0.1.0
-        # Empty by default (no secret in git). Override on the build command:
-        # xcodebuild … GGBG_CLOUD_TOKEN=ggbg_…
-        GGBG_CLOUD_TOKEN: ""
