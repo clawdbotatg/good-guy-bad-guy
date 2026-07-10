@@ -104,11 +104,17 @@ final class MLXEngine: LLMEngine {
             // Qwen's recommended sampling for instruct models; the repetition
             // penalty stops the degenerate "2023 and 2024. 2023 and 2024. …"
             // loops a 4-bit 4B model falls into after tool-result injection.
+            // The context window must exceed a full verdict (~70 tokens) or a
+            // whole-answer loop slides out of it before the penalty can bite;
+            // maxTokens is the hard stop when EOS never fires (verdicts are
+            // ≤3 sentences, so 250 is generous). See loopCutIndex for the
+            // third layer.
             generateParameters: GenerateParameters(
+                maxTokens: 250,
                 temperature: 0.7,
                 topP: 0.8,
                 repetitionPenalty: 1.15,
-                repetitionContextSize: 64
+                repetitionContextSize: 128
             ),
             tools: PhoneTools.specs + MoreTools.specs,
             toolDispatch: { call in
@@ -161,7 +167,17 @@ final class MLXEngine: LLMEngine {
                 do {
                     for try await chunk in upstream {
                         DebugLog.log("chunk: \(chunk.debugDescription)")
-                        reply += chunk
+                        let candidate = reply + chunk
+                        if let cut = Self.loopCutIndex(candidate) {
+                            let kept = String(candidate[..<cut])
+                            if kept.count > reply.count {
+                                continuation.yield(String(kept.dropFirst(reply.count)))
+                            }
+                            reply = kept.trimmingCharacters(in: .whitespacesAndNewlines)
+                            DebugLog.log("repetition loop detected — cut reply at \(reply.count) chars")
+                            break
+                        }
+                        reply = candidate
                         continuation.yield(chunk)
                     }
                     self.commit(user: userMessage, reply: reply)
@@ -173,6 +189,16 @@ final class MLXEngine: LLMEngine {
                 }
             }
         }
+    }
+
+    /// Qwen3-VL-4B-4bit sometimes fails to emit EOS after a complete verdict
+    /// and restarts the whole answer ("…move it.\n\nVERD\n\nVERDICT: …") —
+    /// the loop is a whole answer long, so the repetition penalty alone can't
+    /// reliably kill it. Any "VERD" appearing after the first VERDICT means
+    /// the format is restarting; cut generation right before it.
+    private static func loopCutIndex(_ text: String) -> String.Index? {
+        guard let first = text.range(of: "VERDICT") else { return nil }
+        return text.range(of: "VERD", range: first.upperBound..<text.endIndex)?.lowerBound
     }
 
     /// Append a finished exchange to the replayed history. Think-blocks are
