@@ -21,13 +21,21 @@ struct MessageBubble: View {
                 if message.role == .assistant, message.identification != nil {
                     identificationBlock
                 }
-                if message.isThinking && message.bodyText.isEmpty {
+                if message.role == .assistant, message.identification != nil,
+                    message.verdict == nil
+                {
+                    // Named it; now looking the name up in the danger table.
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Checking if it's dangerous…").foregroundStyle(.secondary)
+                    }
+                } else if message.isThinking && message.bodyText.isEmpty {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text("Looking…").foregroundStyle(.secondary)
                     }
                 } else if message.bodyText.isEmpty && message.image == nil
-                    && message.verdict == nil
+                    && message.verdict == nil && message.identification == nil
                 {
                     ProgressView().controlSize(.small)
                 } else if !message.bodyText.isEmpty {

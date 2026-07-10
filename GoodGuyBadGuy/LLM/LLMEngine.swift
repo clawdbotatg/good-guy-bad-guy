@@ -27,11 +27,8 @@ protocol LLMEngine {
 final class MockEngine: LLMEngine {
     let modelName = "MockEngine (simulator)"
 
-    private static let cannedIdentification = """
-        CATEGORY: plant
-        ID: Daylily (Hemerocallis fulva)
-        FEATURES: orange trumpet-shaped flower with six petals and strap-like leaves
-        """
+    /// What the naming pass would return on device.
+    private static let cannedName = "Daylily"
 
     func load(onProgress: @escaping @MainActor (Double) -> Void) async throws {
         for step in 1...20 {
@@ -53,10 +50,13 @@ final class MockEngine: LLMEngine {
                     continuation.finish()
                     return
                 }
-                // Pretend the vision stage took a moment, then run the real
-                // verdict pipeline over its output.
+                // Mirror the device's two passes: name it, show the name,
+                // then judge it.
+                try? await Task.sleep(for: .milliseconds(700))
+                continuation.yield("ID: \(Self.cannedName)\n")
                 try? await Task.sleep(for: .milliseconds(900))
-                continuation.yield(DangerTable.verdict(modelText: Self.cannedIdentification).text)
+                continuation.yield(
+                    DangerTable.verdict(name: Self.cannedName, category: "plant").text)
                 continuation.finish()
             }
         }

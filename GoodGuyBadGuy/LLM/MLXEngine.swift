@@ -13,12 +13,20 @@ import Tokenizers
 /// Real on-device backend: downloads the model from Hugging Face once,
 /// then runs inference on the GPU via MLX.
 ///
-/// **Two-stage design.** A photo turn does NOT ask the model whether
-/// something is dangerous — it asks only "what is this?", then
-/// `DangerTable` decides the verdict from curated data. The model is the
-/// eyes; the table is the encyclopedia. (It once called a daylily "safe for
-/// cats", which is lethally wrong; see `DangerTable`.) Text turns after a
-/// verdict are ordinary conversation.
+/// **A photo is answered in two minimal passes, never one big one.**
+///
+/// 1. *Name it.* Image + a one-line prompt: "in very few words, what is
+///    this?" Nothing else — no format, no categories, no safety talk. The
+///    answer goes straight to the screen. Asking a 4B model to identify an
+///    animal *and* fill in a `CATEGORY:/ID:/FEATURES:` template in one shot
+///    degrades both jobs: it parroted the template back and stopped naming
+///    things it had previously named correctly (device, 2026-07-09).
+/// 2. *Judge it.* `DangerTable` looks the name up. Only if the species isn't
+///    in the table does the model get a second, equally tiny question — one
+///    word for the category — which selects the safe default.
+///
+/// The model is the eyes; the table is the encyclopedia. It once called a
+/// daylily "safe for cats", which is lethally wrong, so it is never asked.
 @MainActor
 final class MLXEngine: LLMEngine {
     /// Swap the model by pointing at any entry in `LLMRegistry` (text-only),
@@ -31,53 +39,27 @@ final class MLXEngine: LLMEngine {
     /// 4B is the real ceiling for phones today.
     private static let model = VLMRegistry.qwen3VL4BInstruct4Bit
 
-    /// Stage 1. Identification only — no safety claims, no verdict. Keeping
-    /// the model off the safety question is the whole point of the design.
-    ///
-    /// Written as a worked EXAMPLE rather than an angle-bracket template: a
-    /// 4B model parrots `<common name>` straight back, and that placeholder
-    /// then reaches the user as an identification (device, 2026-07-09).
-    private static let identifyInstructions = """
-        You identify organisms in photos for a wildlife-safety app. You are \
-        shown ONE photo. Name the single most likely organism in it.
-
-        Answer with exactly three lines, shaped like this example:
-
-        CATEGORY: spider
-        ID: Cellar spider (Pholcus phalangioides)
-        FEATURES: very long thin legs and a small pale body on a textured wall
-
-        Rules:
-        - CATEGORY must be exactly one of these words: snake, spider, \
-        scorpion, insect, plant, mushroom, mammal, bird, other.
-        - ID must be a real name you believe fits THIS photo. Never copy the \
-        example, and never write placeholders, brackets, or the words \
-        "common name".
-        - FEATURES: one short sentence on what you actually see in this photo.
-        - If you are not confident, still give your best guess and add \
-        " (uncertain)" after the name.
-        - If the photo has no living thing in it, answer CATEGORY: other and \
-        ID: not a plant or animal
-        - Never say whether it is dangerous, venomous, poisonous, or safe. \
-        Another system decides that. Output the three lines only.
-        """
-
-    /// Fallback when the structured reply gives no usable name. The app must
-    /// always tell the user what it thinks the thing is, so we drop the
-    /// format entirely and just ask.
-    private static let nameOnlyInstructions = """
+    /// Pass 1. As little context as possible: look, and name it.
+    private static let nameInstructions = """
         Look at the photo and name the animal, plant, or mushroom in it.
 
-        Reply with ONLY the name — two to six words, no sentence, no \
-        punctuation, no explanation. For example: Cellar spider, or Eastern \
-        gray squirrel, or Fly agaric mushroom.
+        Answer with the name only — no sentence, no punctuation, no \
+        explanation. Two to six words. Like: Leopard gecko. Or: Cellar \
+        spider. Or: Daylily.
 
-        If you truly cannot tell what it is, reply with exactly: unknown
+        If it is not a living thing, answer: not a plant or animal
+        If you truly cannot tell, answer: unknown
         Never say whether it is dangerous or safe.
         """
 
-    /// Stage 2 is the app. This is only for follow-up questions after a
-    /// verdict has already been rendered.
+    /// Pass 2, and only when the name isn't already in the danger table: one
+    /// word, to pick the safe default.
+    private static let categoryInstructions = """
+        Answer with exactly one word from this list and nothing else:
+        snake, spider, scorpion, insect, plant, mushroom, mammal, bird, other
+        """
+
+    /// Follow-up questions after a verdict has been rendered.
     private static let followupInstructions = """
         You are Good Guy Bad Guy, a wildlife-safety helper running fully \
         on-device on the user's iPhone (\(model.name) via MLX — no cloud, \
@@ -133,9 +115,12 @@ final class MLXEngine: LLMEngine {
         history = []
     }
 
-    /// One fresh ChatSession per turn (see `history` comment).
+    /// One fresh ChatSession per turn (see `history` comment). The two
+    /// identification passes get no tools: they should look at the photo and
+    /// answer, not reach for the phone.
     private func makeSession(
-        _ container: ModelContainer, instructions: String, maxTokens: Int
+        _ container: ModelContainer, instructions: String, maxTokens: Int,
+        withTools: Bool = false
     ) -> ChatSession {
         ChatSession(
             container,
@@ -143,11 +128,10 @@ final class MLXEngine: LLMEngine {
             // Qwen's recommended sampling for instruct models; the repetition
             // penalty stops the degenerate "2023 and 2024. 2023 and 2024. …"
             // loops a 4-bit 4B model falls into. Keep the window at 64: at 128
-            // a keyword the format requires (e.g. "VERDICT") is still
-            // in-window when the answer starts, the penalty vetoes completing
-            // the word, and the model stutters "VERD\nVERD\nVERD" (seen on
-            // device 2026-07-09). maxTokens is the hard stop when EOS never
-            // fires.
+            // a keyword the answer needs is still in-window when it starts,
+            // the penalty vetoes completing the word, and the model stutters
+            // (seen on device 2026-07-09). maxTokens is the hard stop when EOS
+            // never fires.
             generateParameters: GenerateParameters(
                 maxTokens: maxTokens,
                 temperature: 0.7,
@@ -155,7 +139,7 @@ final class MLXEngine: LLMEngine {
                 repetitionPenalty: 1.15,
                 repetitionContextSize: 64
             ),
-            tools: PhoneTools.specs + MoreTools.specs,
+            tools: withTools ? PhoneTools.specs + MoreTools.specs : [],
             toolDispatch: { call in
                 DebugLog.log("tool call: \(call.function.name) args: \(call.function.arguments)")
                 // A stuck tool must never hang the whole reply (the model
@@ -195,58 +179,57 @@ final class MLXEngine: LLMEngine {
         return followUp(prompt, container: container)
     }
 
-    // MARK: stage 1 — identify, then let the table decide
+    // MARK: photo → name, then name → verdict
 
-    /// Collects the model's identification in full (nothing is streamed to the
-    /// UI: the raw `CATEGORY:/ID:/FEATURES:` lines are machinery, not an
-    /// answer), runs the danger lookup, and emits the composed verdict.
     private func identify(_ image: CIImage, container: ModelContainer) -> AsyncThrowingStream<
         String, Error
     > {
-        // A fresh photo is identified on its own — prior turns about a
-        // different creature would only bias the ID.
-        let session = makeSession(
-            container, instructions: Self.identifyInstructions, maxTokens: 160)
-        let userMessage = Chat.Message.user(
-            "Identify the organism in this photo.", images: [.ciImage(image)])
-        let upstream = session.streamResponse(to: [userMessage])
-
-        return AsyncThrowingStream { continuation in
+        AsyncThrowingStream { continuation in
             Task { @MainActor in
                 do {
-                    var raw = ""
-                    for try await chunk in upstream { raw += chunk }
-                    DebugLog.log("identify raw: \(Self.stripThinking(raw))")
+                    // ---- Pass 1: what is it? ----
+                    let reply = try await self.ask(
+                        instructions: Self.nameInstructions, prompt: "What is this?",
+                        image: image, maxTokens: 32, container: container)
+                    DebugLog.log("name pass: \(reply.debugDescription)")
 
-                    var identification = DangerTable.identify(
-                        modelText: Self.stripThinking(raw))
-
-                    // The structured format failed us — ask the plain question
-                    // rather than showing a verdict with no identification.
-                    if identification.name == nil, !identification.notAnOrganism {
-                        DebugLog.log("no name parsed — second pass, name only")
-                        if let name = try await self.nameOnly(image, container: container) {
-                            DebugLog.log("second pass name: \(name)")
-                            identification = DangerTable.Identification(
-                                category: identification.category,
-                                name: name,
-                                features: identification.features,
-                                notAnOrganism: false,
-                                uncertain: false
-                            )
-                        }
+                    if DangerTable.isNotAnOrganism(reply) {
+                        continuation.yield(
+                            "That doesn't look like a plant or animal. Point the camera at the creature, plant, or mushroom you want checked."
+                        )
+                        self.history = []
+                        continuation.finish()
+                        return
                     }
 
-                    let result = DangerTable.verdict(identification)
-                    DebugLog.log(
-                        "id: \(identification.name ?? "none") verdict: \(result.verdict.map(String.init(describing:)) ?? "none")")
+                    let name = DangerTable.sanitizeName(reply)
+                    let hedged = DangerTable.isHedged(reply)
 
+                    // Show the identification immediately — the user asked
+                    // what it is, and the danger pass may take a moment.
+                    continuation.yield("ID: \(name ?? "Couldn't identify it")\n")
+
+                    // ---- Pass 2: how dangerous is it? ----
+                    // The table answers directly for anything it knows. Only
+                    // an unknown name needs the model's category, and only to
+                    // pick the safe default.
+                    var category: String?
+                    if let name, DangerTable.lookup(name: name) == nil {
+                        category = try await self.categorize(name, image: image, container: container)
+                        DebugLog.log("category pass: \(category ?? "nil")")
+                    }
+
+                    let result = DangerTable.verdict(
+                        name: name, category: category, hedged: hedged)
+                    DebugLog.log(
+                        "id=\(name ?? "none") verdict=\(result.verdict.map(String.init(describing:)) ?? "none")")
                     continuation.yield(result.text)
-                    // History carries the composed verdict (not the raw ID
-                    // lines) so follow-ups reason from the facts the user saw.
+
+                    // History carries the verdict the user saw, so follow-ups
+                    // reason from those facts.
                     self.history = [
                         .user("[photo of something the user found]"),
-                        .assistant(result.text),
+                        .assistant("ID: \(name ?? "unidentified")\n\(result.text)"),
                     ]
                     continuation.finish()
                 } catch {
@@ -257,23 +240,31 @@ final class MLXEngine: LLMEngine {
         }
     }
 
-    /// Second pass: no format, just "what is it?". Returns nil when the model
-    /// says `unknown` or hands back something unusable.
-    private func nameOnly(_ image: CIImage, container: ModelContainer) async throws -> String? {
-        let session = makeSession(
-            container, instructions: Self.nameOnlyInstructions, maxTokens: 40)
-        let message = Chat.Message.user(
-            "What is this? Name it.", images: [.ciImage(image)])
+    /// One-word category, used only to pick the safe default for a name the
+    /// danger table doesn't know.
+    private func categorize(_ name: String, image: CIImage, container: ModelContainer)
+        async throws -> String?
+    {
+        let reply = try await ask(
+            instructions: Self.categoryInstructions,
+            prompt: "This looks like: \(name). Which one word describes it?",
+            image: image, maxTokens: 8, container: container)
+        let word = DangerTable.firstMeaningfulLine(reply)?
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet.letters.inverted)
+        return word.flatMap { DangerTable.categories.contains($0) ? $0 : nil }
+    }
+
+    /// Run one short, tool-free, history-free question against the photo.
+    private func ask(
+        instructions: String, prompt: String, image: CIImage, maxTokens: Int,
+        container: ModelContainer
+    ) async throws -> String {
+        let session = makeSession(container, instructions: instructions, maxTokens: maxTokens)
+        let message = Chat.Message.user(prompt, images: [.ciImage(image)])
         var raw = ""
         for try await chunk in session.streamResponse(to: [message]) { raw += chunk }
-
-        // Take the first real line and strip the decoration a small model adds.
-        let line = DangerTable.firstMeaningfulLine(Self.stripThinking(raw))
-        guard let line, line.count <= 60,
-            line.range(of: "unknown", options: .caseInsensitive) == nil,
-            !line.contains("<")
-        else { return nil }
-        return line
+        return Self.stripThinking(raw)
     }
 
     // MARK: text follow-ups
@@ -282,7 +273,7 @@ final class MLXEngine: LLMEngine {
         String, Error
     > {
         let session = makeSession(
-            container, instructions: Self.followupInstructions, maxTokens: 300)
+            container, instructions: Self.followupInstructions, maxTokens: 300, withTools: true)
         let userMessage = Chat.Message.user(prompt)
         let upstream = session.streamResponse(to: history + [userMessage])
         DebugLog.log("follow-up (history: \(history.count) msgs)")

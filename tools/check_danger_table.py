@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Regression test for the safety-critical verdict pipeline.
+"""Regression test for the safety-critical verdict logic.
 
-`DangerTable.verdict()` is the one part of this app that must never be wrong,
-and it is pure text parsing + data lookup — so it is testable without a phone,
-a GPU, or a model. This script extracts the embedded JSON from
-DangerData.swift, checks its invariants, and mirrors the Swift pipeline
-(template stripping -> parse -> match -> verdict) over raw model outputs that
-encode bugs we have actually shipped.
+`DangerTable.verdict(name:category:hedged:)` is the one part of this app that
+must never be wrong, and it is pure data + string matching — so it is testable
+without a phone, a GPU, or a model. This script extracts the embedded JSON from
+DangerData.swift, checks its invariants, and mirrors the Swift matching rules
+over cases that encode bugs we have actually shipped.
 
     python3 tools/check_danger_table.py     # exit 0 = safe to ship
 
-If you change DangerTable.swift, change the mirror below to match, and add the
-case that motivated the change.
+The app takes a photo through two minimal model passes — "what is this?" then
+(only if the name is unknown) "one word: what category?" — and everything
+after that is the logic mirrored here. If you change DangerTable.swift, change
+the mirror below to match, and add the case that motivated the change.
 """
 import json
 import re
@@ -21,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "GoodGuyBadGuy" / "LLM" / "DangerData.swift"
 
-KNOWN = {"snake", "spider", "scorpion", "insect", "plant", "mushroom", "mammal", "bird", "other"}
+CATEGORIES = {"snake", "spider", "scorpion", "insect", "plant", "mushroom", "mammal", "bird", "other"}
 # Categories where no match means CAUTION, not safety.
 CAUTION_ON_MISS = {"snake", "spider", "scorpion", "plant", "mushroom", "other"}
 SEVERITY = {"bad": 2, "caution": 1, "good": 0}
@@ -40,45 +41,23 @@ def load_entries():
 # --- mirror of DangerTable.swift ------------------------------------------
 
 
-def strip_echoed_template(text):
-    """Drop lines that are the prompt's template, not an answer."""
-    keep = [
-        l for l in text.split("\n")
-        if "<" not in l and ">" not in l and not re.search(r"one of:", l, re.I)
-    ]
-    return "\n".join(keep).strip()
-
-
-def _value(key, line):
-    stripped = line.strip(" \t*-#•>")
-    if not stripped.lower().startswith(key.lower() + ":"):
+def sanitize_name(reply):
+    """Mirrors sanitizeName + displayName: rejects placeholders and 'unknown'."""
+    line = reply.strip().split("\n")[0].strip(" \t*-#•>\"'.,;:")
+    if not line or len(line) > 60:
         return None
-    return stripped[len(key) + 1:].strip(" \t*")
-
-
-def parse(text):
-    category = ident = features = None
-    for line in text.split("\n"):
-        line = line.strip()
-        if (v := _value("CATEGORY", line)) is not None:
-            category = re.sub(r"[^a-z]", "", v.lower())
-        elif (v := _value("ID", line)) is not None:
-            ident = v
-        elif (v := _value("FEATURES", line)) is not None:
-            features = v
-    return category, ident, features
-
-
-def display_name(ident):
-    if not ident or not ident.strip():
+    if re.search(r"unknown", line, re.I):
         return None
-    if "<" in ident or ">" in ident:
+    if "<" in line or ">" in line:
         return None
-    if re.search(r"common name|scientific name", ident, re.I):
+    if re.search(r"common name|scientific name", line, re.I):
         return None
-    name = re.sub(r"\((?:uncertain|not sure|unknown)\)", "", ident, flags=re.I)
-    name = name.strip(" .,;")
+    name = re.sub(r"\((?:uncertain|not sure|unknown)\)", "", line, flags=re.I).strip(" .,;")
     return name or None
+
+
+def is_hedged(reply):
+    return bool(re.search(r"uncertain|not sure|unknown|possibly|might be", reply, re.I))
 
 
 def _pattern(alias):
@@ -88,11 +67,11 @@ def _pattern(alias):
     return r"\b" + body + r"\b"
 
 
-def _best_match(entries, text):
+def lookup(entries, name):
     """Most specific alias wins; severity only breaks ties."""
     best = None  # (entry, specificity)
     for entry in entries:
-        lengths = [len(n) for n in entry["names"] if re.search(_pattern(n), text, re.I)]
+        lengths = [len(n) for n in entry["names"] if re.search(_pattern(n), name, re.I)]
         if not lengths:
             continue
         longest = max(lengths)
@@ -105,118 +84,89 @@ def _best_match(entries, text):
         )
         if more_specific or tie_by_severity:
             best = (entry, longest)
-    return best
+    return best[0] if best else None
 
 
-def verdict(entries, raw):
-    """Returns (verdict, identification-shown-to-user)."""
-    cleaned = strip_echoed_template(raw)
-    category, ident, features = parse(cleaned)
-    category = category if category in KNOWN else "other"
-
-    if re.search("not a plant or animal", ident or cleaned, re.I):
-        return "NONE", None
-
-    id_text = ident if ident is not None else (cleaned if len(cleaned) <= 200 else None)
-    name = display_name(id_text)
+def verdict(entries, name, category=None, hedged=False):
+    category = category if category in CATEGORIES else "other"
     if not name:
-        return "CAUTION", None  # never guess from stray words
-
-    uncertain = bool(re.search(r"uncertain|not sure|unknown", id_text, re.I))
-    best = _best_match(entries, id_text) or (
-        _best_match(entries, features) if features else None
-    )
+        return "CAUTION"
+    best = lookup(entries, name)
     if best:
-        entry = best[0]
-        if uncertain and entry["verdict"] == "good":
-            return "CAUTION", name
-        if category == "mushroom" and entry["verdict"] == "good":
-            return "CAUTION", name
-        return entry["verdict"].upper(), name
-    if uncertain or category in CAUTION_ON_MISS:
-        return "CAUTION", name
-    return "GOOD", name
+        if hedged and best["verdict"] == "good":
+            return "CAUTION"
+        if (best["category"] == "mushroom" or category == "mushroom") and best["verdict"] == "good":
+            return "CAUTION"
+        return best["verdict"].upper()
+    if category == "mushroom":
+        return "CAUTION"
+    if hedged or category in CAUTION_ON_MISS:
+        return "CAUTION"
+    return "GOOD"
 
 
-# --- cases ----------------------------------------------------------------
+def pipeline(entries, raw_name, category=None):
+    """The whole post-model path: sanitize the naming pass, then judge."""
+    if re.search("not a plant or animal", raw_name, re.I):
+        return "NONE"
+    return verdict(entries, sanitize_name(raw_name), category, is_hedged(raw_name))
 
-def ident_lines(category, ident, features="visible features"):
-    return f"CATEGORY: {category}\nID: {ident}\nFEATURES: {features}"
 
-
-# The prompt template the model parroted back verbatim on device, 2026-07-09.
-ECHOED_TEMPLATE = (
-    "CATEGORY: <one of: snake, spider, scorpion, insect, plant, mushroom, mammal, bird, other>\n"
-    "ID: <common name> (<scientific name or genus, if you know it>)\n"
-    "FEATURES: <one short sentence naming the visible features behind your ID>"
-)
-
-# (raw model output, expected verdict, expected shown ID, why this case exists)
+# (raw naming-pass reply, category from pass 2 (or None), expected, why)
 CASES = [
-    (ident_lines("plant", "Daylily (Hemerocallis)"), "BAD", "Daylily (Hemerocallis)",
-     "the bug that started this: model called it safe for cats"),
-    (ident_lines("plant", "This is a daylily, Lilium (genus)"), "BAD", None,
-     "model's exact on-device wording"),
-    (ident_lines("plant", "Daylilies growing in a bed"), "BAD", None, "plural must still match"),
-    (ident_lines("plant", "Easter lilies in a vase"), "BAD", None, "plural of a multi-word alias"),
-    (ident_lines("plant", "Peace lily (Spathiphyllum)"), "CAUTION", None,
-     "not a true lily: specificity must beat severity"),
-    (ident_lines("spider", "Wolf spider (Lycosidae)"), "GOOD", None,
-     "must not match the 'wolf' mammal entry"),
-    (ident_lines("snake", "Milk snake, a coral snake mimic"), "BAD", None,
-     "equal specificity ties break toward danger"),
-    (ident_lines("mammal", "An elephant standing near a plant"), "GOOD", None,
-     "'ant' must not fire inside other words"),
+    ("Daylily", "plant", "BAD", "the bug that started this: model called it safe for cats"),
+    ("Daylily (Hemerocallis)", "plant", "BAD", "scientific name in parens"),
+    ("Daylilies", "plant", "BAD", "plural must still match"),
+    ("Easter lilies", "plant", "BAD", "plural of a multi-word alias"),
+    ("Peace lily", "plant", "CAUTION", "not a true lily: specificity must beat severity"),
+    ("Wolf spider", "spider", "GOOD", "must not match the 'wolf' mammal entry"),
+    ("Milk snake, a coral snake mimic", "snake", "BAD", "equal specificity ties break toward danger"),
+    ("Elephant near a plant", "mammal", "GOOD", "'ant' must not fire inside other words"),
 
-    # --- the two bugs visible in the 2026-07-09 device screenshots ---
-    (ECHOED_TEMPLATE, "CAUTION", None,
-     "parroted template: must not show placeholders, and 'scorpion' in the echoed "
-     "CATEGORY list must not match the scorpion entry"),
-    (ident_lines("spider", "Cellar spider (Pholcus phalangioides)", "very long thin legs"),
-     "GOOD", "Cellar spider (Pholcus phalangioides)",
-     "the actual spider on the wall: harmless, and it was called a scorpion"),
-    ("CATEGORY: other\n**ID:** Leopard gecko (Eublepharis macularius)\nFEATURES: spotted lizard",
-     "GOOD", "Leopard gecko (Eublepharis macularius)",
-     "markdown-decorated label must parse, not fall back to the name 'This'"),
-    ("- ID: Garter snake (Thamnophis)\n- CATEGORY: snake", "GOOD", "Garter snake (Thamnophis)",
-     "bulleted labels in any order"),
-    ("This is a leopard gecko.", "GOOD", "This is a leopard gecko",
-     "short unlabeled freeform reply is accepted as the ID"),
-    ("CATEGORY: spider\nFEATURES: long legs on a wall", "CAUTION", None,
-     "no ID line: refuse to guess, fall to CAUTION"),
+    # Naming-pass hygiene (the model parroting or hedging).
+    ("<common name>", "other", "CAUTION", "parroted placeholder is never a name"),
+    ("unknown", "spider", "CAUTION", "model admits it can't tell"),
+    ("Garter snake (uncertain)", "snake", "CAUTION", "a hedged GOOD is downgraded"),
+    ("Fly agaric (uncertain)", "mushroom", "BAD", "hedging never rescues a dangerous species"),
+    ("not a plant or animal", None, "NONE", "no banner for a photo of a rock"),
 
-    (ident_lines("mushroom", "Death cap (Amanita phalloides)"), "BAD", None, "deadliest mushroom"),
-    (ident_lines("mushroom", "Some little brown mushroom"), "CAUTION", None,
-     "unmatched mushroom is never GOOD"),
-    (ident_lines("mushroom", "Chanterelle (Cantharellus)"), "CAUTION", None,
-     "wild mushrooms are never GOOD, even edibles"),
-    (ident_lines("snake", "Garter snake (Thamnophis sirtalis)"), "GOOD", None, "harmless snake"),
-    (ident_lines("snake", "Eastern coral snake (Micrurus fulvius)"), "BAD", None, "neurotoxic"),
-    (ident_lines("snake", "Some snake I cannot place"), "CAUTION", None,
-     "unmatched snake is never GOOD"),
-    (ident_lines("snake", "Garter snake (uncertain)"), "CAUTION", None,
-     "a hedged GOOD is downgraded"),
-    (ident_lines("mushroom", "Fly agaric (Amanita muscaria) (uncertain)"), "BAD", None,
-     "hedging never rescues a dangerous species"),
-    (ident_lines("spider", "Black widow (Latrodectus mactans)"), "BAD", None, "medically significant"),
-    (ident_lines("spider", "Brown recluse (Loxosceles reclusa)"), "BAD", None, "necrotic bite"),
-    (ident_lines("spider", "Jumping spider (Salticidae)"), "GOOD", None, "harmless"),
-    (ident_lines("insect", "Ticks on a dog"), "BAD", None, "disease vector, plural"),
-    (ident_lines("insect", "Ladybug (Coccinellidae)"), "GOOD", None, "harmless"),
-    (ident_lines("insect", "Honey bee (Apis mellifera)"), "CAUTION", None, "sting risk if allergic"),
-    (ident_lines("plant", "Sago palm (Cycas revoluta)"), "BAD", None, "liver failure in dogs"),
-    (ident_lines("plant", "Poison ivy (Toxicodendron radicans)"), "BAD", None, "urushiol"),
-    (ident_lines("plant", "Oleander (Nerium oleander)"), "BAD", None, "cardiac glycosides"),
-    (ident_lines("plant", "Water hemlock (Cicuta maculata)"), "BAD", None, "most poisonous in N.A."),
-    (ident_lines("plant", "Dandelion (Taraxacum officinale)"), "GOOD", None, "matched harmless"),
-    (ident_lines("plant", "Some weed I don't recognize"), "CAUTION", None,
-     "unmatched plant is never GOOD"),
-    (ident_lines("other", "Cane toad (Rhinella marina)"), "BAD", None, "kills dogs that mouth it"),
-    (ident_lines("other", "Gila monster (Heloderma suspectum)"), "BAD", None, "venomous lizard"),
-    (ident_lines("other", "Box turtle (Terrapene)"), "GOOD", None, "matched harmless"),
-    ("CATEGORY: other\nID: not a plant or animal", "NONE", None, "no banner for a photo of a rock"),
-    (ident_lines("mammal", "Grizzly bear (Ursus arctos)"), "BAD", None, "large predator"),
-    (ident_lines("mammal", "Eastern gray squirrel"), "GOOD", None, "unmatched mammal defaults GOOD"),
+    # The two subjects from the device screenshots.
+    ("Cellar spider", "spider", "GOOD", "harmless; was wrongly called a scorpion"),
+    ("Leopard gecko", "other", "GOOD", "was showing the literal name 'This'"),
+
+    # Category defaults when the name is unknown to the table.
+    ("Some little brown mushroom", "mushroom", "CAUTION", "unmatched mushroom is never GOOD"),
+    ("Chanterelle", "mushroom", "CAUTION", "wild mushrooms are never GOOD, even edibles"),
+    ("Some snake I cannot place", "snake", "CAUTION", "unmatched snake is never GOOD"),
+    ("A weed of some kind", "plant", "CAUTION", "unmatched plant is never GOOD"),
+    ("Small brown bird", "bird", "GOOD", "unmatched bird defaults GOOD"),
+    ("Eastern gray squirrel", "mammal", "GOOD", "unmatched mammal defaults GOOD"),
+    ("Some little beetle", "insect", "GOOD", "unmatched insect defaults GOOD"),
+    ("Weird sea creature", "other", "CAUTION", "unmatched 'other' is never GOOD"),
+
+    # Known species (category comes from the table, so pass 2 never runs).
+    ("Death cap", None, "BAD", "deadliest mushroom on earth"),
+    ("Garter snake", None, "GOOD", "harmless snake"),
+    ("Eastern coral snake", None, "BAD", "neurotoxic"),
+    ("Black widow", None, "BAD", "medically significant"),
+    ("Brown recluse", None, "BAD", "necrotic bite"),
+    ("Jumping spider", None, "GOOD", "harmless"),
+    ("Ticks", None, "BAD", "disease vector, plural"),
+    ("Ladybug", None, "GOOD", "harmless"),
+    ("Honey bee", None, "CAUTION", "sting risk if allergic"),
+    ("Sago palm", None, "BAD", "liver failure in dogs"),
+    ("Poison ivy", None, "BAD", "urushiol"),
+    ("Oleander", None, "BAD", "cardiac glycosides"),
+    ("Water hemlock", None, "BAD", "most poisonous plant in N. America"),
+    ("Dandelion", None, "GOOD", "matched harmless plant"),
+    ("Fly agaric", None, "BAD", "dogs are drawn to them"),
+    ("Cane toad", None, "BAD", "kills dogs that mouth it"),
+    ("Gila monster", None, "BAD", "venomous lizard"),
+    ("Box turtle", None, "GOOD", "matched harmless"),
+    ("Grizzly bear", None, "BAD", "large predator"),
+    # A table entry whose category is mushroom must never be GOOD even if the
+    # danger pass mislabels the category.
+    ("Chanterelle", "plant", "CAUTION", "mushroom rule keys off the entry, not just the pass"),
 ]
 
 
@@ -232,7 +182,7 @@ def main():
         if not entry["note"].strip():
             print(f"  EMPTY NOTE in {entry['names'][0]}")
             problems += 1
-        if entry["category"] not in KNOWN:
+        if entry["category"] not in CATEGORIES:
             print(f"  UNKNOWN CATEGORY {entry['category']!r} in {entry['names'][0]}")
             problems += 1
         for name in entry["names"]:
@@ -249,15 +199,13 @@ def main():
     print(f"{len(aliases)} aliases, {problems} invariant problems\n")
 
     failures = 0
-    for raw, want, want_id, why in CASES:
-        got, got_id = verdict(entries, raw)
-        ok = got == want and (want_id is None or got_id == want_id)
+    for raw_name, category, want, why in CASES:
+        got = pipeline(entries, raw_name, category)
+        ok = got == want
         failures += not ok
-        label = raw.replace("\n", " | ")[:64]
-        print(f"  {'ok  ' if ok else 'FAIL'} {got:8} {label}")
+        print(f"  {'ok  ' if ok else 'FAIL'} {got:8} {raw_name!r} [{category}]")
         if not ok:
-            print(f"       wanted {want}" + (f" / id={want_id!r}" if want_id else "")
-                  + f", got {got} / id={got_id!r} ({why})")
+            print(f"       wanted {want} ({why})")
 
     total = problems + failures
     print(f"\n{'ALL PASS' if not total else f'{total} PROBLEM(S)'}")
