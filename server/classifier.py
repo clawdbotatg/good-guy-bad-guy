@@ -196,7 +196,11 @@ def classify_with_bankr(image_path, mime, timeout=45, model=None):
             ],
         }],
         "temperature": 0.2,
-        "max_tokens": 300,
+        # Generous cap: reasoning models (e.g. gemini-3.1-pro) spend most of
+        # their tokens *thinking* before emitting the JSON — a 300 cap truncates
+        # them mid-object (finish_reason "length"). Non-reasoning models stop
+        # early on their own, so you only pay for what's actually generated.
+        "max_tokens": 2000,
     }
     req = urllib.request.Request(
         BANKR_BASE_URL.rstrip("/") + "/v1/chat/completions",
