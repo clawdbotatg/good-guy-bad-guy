@@ -5,3 +5,7 @@ build/
 *.xcworkspace/xcshareddata/swiftpm/Package.resolved
 .swiftpm/
 __pycache__/
+
+# Server runtime / secrets / debug data
+server/.env
+server/data/
