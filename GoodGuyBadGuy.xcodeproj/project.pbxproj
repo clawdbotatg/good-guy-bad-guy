@@ -16,6 +16,7 @@
 		4246F663ABE0D4BDE40828E5 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 238D4338CECD33B1B87F0AF0 /* ChatMessage.swift */; };
 		5D9594A14403850E4FE15D87 /* LLMEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06B4FE9396A536B0DD6D79DC /* LLMEngine.swift */; };
 		5E7F14CB01E5D228255BF425 /* MoreTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D110805D05D0582BD9A34A4E /* MoreTools.swift */; };
+		5ECF5396997BD588B224F266 /* DangerTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14D088071876DCC53C6E9008 /* DangerTable.swift */; };
 		6404AED111A8F1B1B9E3DC7C /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = A82623C6DD0E6B07178B8125 /* MLXHuggingFace */; };
 		6CE6DE40EA78AC79ABAEEE2C /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = A26BDF9F45B22BFC03626C1C /* MLXLLM */; };
 		72938E55ECB0C5504A28EEC4 /* PhoneTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D8DF9483E37B11A6358E1A2 /* PhoneTools.swift */; };
@@ -23,6 +24,7 @@
 		8559A471DF4D2014D96CBBB5 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = BC46AEC8379F3FB75CBF5E76 /* Tokenizers */; };
 		8602C35BFA88C3F50D98240D /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDE2068A531901E5694F2710 /* ChatView.swift */; };
 		8F76A5A9697A955E5B3E1FF4 /* CameraPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5BEC1D74A7489159412622C /* CameraPicker.swift */; };
+		97EFD7DD8BF1FA9C42051264 /* DangerData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F60F43DACEAE670B2323F170 /* DangerData.swift */; };
 		AD83F2ABB9E51B0C4B373E7F /* GoodGuyBadGuyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F0ECFF5BA578C1103432B88 /* GoodGuyBadGuyApp.swift */; };
 		B66EEA05EC9A4E9507E2BF90 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2FE31FFB535D9CABA26D57 /* ChatStore.swift */; };
 		B6A6FCDA4D5014605B0FAEE2 /* MLXEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D9AD8DF513D954D6FF1C6F3 /* MLXEngine.swift */; };
@@ -30,6 +32,7 @@
 
 /* Begin PBXFileReference section */
 		06B4FE9396A536B0DD6D79DC /* LLMEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMEngine.swift; sourceTree = "<group>"; };
+		14D088071876DCC53C6E9008 /* DangerTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DangerTable.swift; sourceTree = "<group>"; };
 		238D4338CECD33B1B87F0AF0 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
 		2E2FE31FFB535D9CABA26D57 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
 		5D8DF9483E37B11A6358E1A2 /* PhoneTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneTools.swift; sourceTree = "<group>"; };
@@ -45,6 +48,7 @@
 		BDE2068A531901E5694F2710 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		D110805D05D0582BD9A34A4E /* MoreTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreTools.swift; sourceTree = "<group>"; };
 		F4A32078779DBCF2C682CC56 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F60F43DACEAE670B2323F170 /* DangerData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DangerData.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -108,6 +112,8 @@
 			isa = PBXGroup;
 			children = (
 				2E2FE31FFB535D9CABA26D57 /* ChatStore.swift */,
+				F60F43DACEAE670B2323F170 /* DangerData.swift */,
+				14D088071876DCC53C6E9008 /* DangerTable.swift */,
 				06B4FE9396A536B0DD6D79DC /* LLMEngine.swift */,
 				9D9AD8DF513D954D6FF1C6F3 /* MLXEngine.swift */,
 				D110805D05D0582BD9A34A4E /* MoreTools.swift */,
@@ -220,6 +226,8 @@
 				4246F663ABE0D4BDE40828E5 /* ChatMessage.swift in Sources */,
 				B66EEA05EC9A4E9507E2BF90 /* ChatStore.swift in Sources */,
 				8602C35BFA88C3F50D98240D /* ChatView.swift in Sources */,
+				97EFD7DD8BF1FA9C42051264 /* DangerData.swift in Sources */,
+				5ECF5396997BD588B224F266 /* DangerTable.swift in Sources */,
 				790D3266AEDFEE1442A7D25A /* DebugLog.swift in Sources */,
 				AD83F2ABB9E51B0C4B373E7F /* GoodGuyBadGuyApp.swift in Sources */,
 				5D9594A14403850E4FE15D87 /* LLMEngine.swift in Sources */,

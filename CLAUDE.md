@@ -7,16 +7,45 @@ A fork of [clawd-mobile-app](https://github.com/clawdbotatg/clawd-mobile-app)
 (~2.7 GB) on first launch, then runs fully offline. `README.md` has the
 architecture; this file is the working state.
 
-## What's different from the ClawdChat parent
+## The one architectural rule: the model never decides danger
 
-- **Persona**: `MLXEngine.instructions` forces every identification to open
-  with `VERDICT: GOOD GUY | BAD GUY | CAUTION`, with safety-first rules
-  (look-alike → CAUTION never GOOD GUY; never advise touching; never call
-  anything safe to eat; bitten → seek medical help).
-- **Verdict UI**: `ChatMessage.verdict`/`.bodyText` parse the first line
-  (BAD checked first so muddled lines err red); `MessageBubble` renders a
-  green/red/orange banner. `ChatView` empty state is camera-first; an
-  image-only send defaults the prompt to "Good guy or bad guy?".
+**The model is the eyes; `DangerTable` is the encyclopedia.** A 4-bit 4B VLM
+sees well and recalls long-tail facts badly — on device it identified a
+daylily correctly and then declared it "safe for cats," which is lethally
+wrong (lilies cause fatal feline kidney failure). So:
+
+- **Stage 1 (`MLXEngine.identifyInstructions`)**: the model gets the photo and
+  returns ONLY `CATEGORY: / ID: / FEATURES:`. It is explicitly forbidden from
+  saying anything is dangerous or safe.
+- **Stage 2 (`DangerTable.verdict`)**: pure Swift + curated data decides the
+  verdict and prints its `note` verbatim. Rules: most **specific** alias wins
+  (so "wolf spider" doesn't hit the `wolf` entry) with severity breaking ties
+  toward danger; no match on snake/spider/scorpion/plant/mushroom/other →
+  CAUTION (a small model's silence is not evidence of safety); wild mushrooms
+  are never GOOD GUY; a hedged `(uncertain)` GOOD is downgraded to CAUTION;
+  a JSON decode failure empties the table and everything falls to CAUTION.
+- Text follow-ups use `followupInstructions` and are told the printed verdict
+  is authoritative and not to invent new toxicity claims.
+
+**Never route a safety claim through the model.** If you want richer verdicts,
+add entries to `DangerData.swift`, don't loosen the prompt.
+
+`python3 tools/check_danger_table.py` is the regression test (34 cases, no
+phone/GPU needed — it mirrors the Swift matcher over the embedded JSON). It
+encodes bugs already hit: daylily, plural "lilies", peace lily vs true lily,
+wolf spider vs wolf, "ant" inside "plant". **Run it before shipping any table
+or matcher change**, and add the case that motivated your change.
+
+## What else differs from the ClawdChat parent
+
+- **Verdict UI**: `ChatMessage.verdict`/`.bodyText` parse the leading
+  `VERDICT:` line (BAD checked first so muddled lines err red);
+  `MessageBubble` renders a green/red/orange banner plus a standing
+  disclaimer. Since the app composes that line, the model can no longer
+  garble it.
+- **Image-first**: a photo auto-sends on capture/pick — the picture is the
+  question. The composer stays hidden until the first verdict, then appears
+  for follow-ups (`ChatView`).
 - **Tools pruned to offline-only**: `get_location` (region → species priors,
   in `MoreTools`) + `get_device_status` (date → season, in `PhoneTools`).
   WebTools, contacts, calendar, reminders, steps, clipboard, weather are
@@ -27,6 +56,14 @@ architecture; this file is the working state.
 
 Keep the fork lean: if a change isn't about photo→verdict, it probably
 belongs in the parent repo instead.
+
+## Roadmap: online as a bonus, never a dependency
+
+Offline is the product. The clean seam for online work is
+`DangerTable.verdict` — an online enhancer would run *after* it (richer
+species ID, regional priors from `get_location`, a frontier-model second
+opinion) and may only **narrow or escalate** a verdict, never downgrade a
+BAD/CAUTION to GOOD without curated backing.
 
 ## Build / deploy loop (all CLI, no Xcode GUI)
 

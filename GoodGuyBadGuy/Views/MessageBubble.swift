@@ -31,6 +31,11 @@ struct MessageBubble: View {
                     Text(message.bodyText)
                         .textSelection(.enabled)
                 }
+                if message.role == .assistant, message.verdict != nil,
+                    !message.bodyText.isEmpty
+                {
+                    disclaimer
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -44,6 +49,17 @@ struct MessageBubble: View {
 
             if message.role == .assistant { Spacer(minLength: 48) }
         }
+    }
+
+    /// Shown under every verdict. Photo ID can be wrong — look-alikes are the
+    /// whole hazard — so the app never implies permission to touch or eat.
+    private var disclaimer: some View {
+        Text(
+            "AI identification from one photo. It can be wrong — never touch, handle, or eat anything based on this. In an emergency call poison control or a vet."
+        )
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.top, 2)
     }
 
     private func verdictBanner(_ verdict: ChatMessage.Verdict) -> some View {

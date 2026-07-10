@@ -12,6 +12,13 @@ import Tokenizers
 
 /// Real on-device backend: downloads the model from Hugging Face once,
 /// then runs inference on the GPU via MLX.
+///
+/// **Two-stage design.** A photo turn does NOT ask the model whether
+/// something is dangerous — it asks only "what is this?", then
+/// `DangerTable` decides the verdict from curated data. The model is the
+/// eyes; the table is the encyclopedia. (It once called a daylily "safe for
+/// cats", which is lethally wrong; see `DangerTable`.) Text turns after a
+/// verdict are ordinary conversation.
 @MainActor
 final class MLXEngine: LLMEngine {
     /// Swap the model by pointing at any entry in `LLMRegistry` (text-only),
@@ -24,40 +31,45 @@ final class MLXEngine: LLMEngine {
     /// 4B is the real ceiling for phones today.
     private static let model = VLMRegistry.qwen3VL4BInstruct4Bit
 
-    private static var instructions: String {
+    /// Stage 1. Identification only — no safety claims, no verdict. Keeping
+    /// the model off the safety question is the whole point of the design.
+    private static let identifyInstructions = """
+        You identify organisms in photos for a wildlife-safety app. You are \
+        shown ONE photo. Name the single most likely organism.
+
+        Reply in EXACTLY this format and nothing else:
+        CATEGORY: <one of: snake, spider, scorpion, insect, plant, mushroom, mammal, bird, other>
+        ID: <common name> (<scientific name or genus, if you know it>)
+        FEATURES: <one short sentence naming the visible features behind your ID>
+
+        If you are not confident, still give your best guess and add \
+        " (uncertain)" after the ID name. If the photo shows no living thing, \
+        reply with CATEGORY: other and ID: not a plant or animal.
+
+        Never state whether it is dangerous, venomous, poisonous, or safe — a \
+        separate system decides that. Output the three lines only.
         """
-        You are Good Guy Bad Guy, a wildlife-safety classifier running FULLY \
-        ON-DEVICE on the user's iPhone (\(model.name) via MLX — no cloud, \
-        photos never leave the phone). The user photographs something they \
-        found outdoors. The photo arrives with no real text: the picture IS \
-        the question — what is this, and is it harmful?
 
-        Reply in EXACTLY this format:
-        Line 1 is one of: "VERDICT: GOOD GUY" (harmless or beneficial), \
-        "VERDICT: BAD GUY" (venomous, toxic, or dangerous to people or pets), \
-        or "VERDICT: CAUTION" (can't identify it confidently, or painful but \
-        not dangerous).
-        Then a blank line, then AT MOST 3 short sentences: what it is (common \
-        name, plus scientific name only if confident), why the verdict, and \
-        what to do. No greetings, no filler, no restating the question.
+    /// Stage 2 is the app. This is only for follow-up questions after a
+    /// verdict has already been rendered.
+    private static let followupInstructions = """
+        You are Good Guy Bad Guy, a wildlife-safety helper running fully \
+        on-device on the user's iPhone (\(model.name) via MLX — no cloud, \
+        photos never leave the phone). The user photographed something and \
+        already received a verdict, shown earlier in this conversation.
 
-        Safety rules — these override everything else:
-        - Dangerous species vs. harmless look-alike and you can't tell which \
-        → CAUTION, name both. Never guess GOOD GUY between look-alikes.
-        - Never advise touching, handling, moving, or eating anything.
-        - If the user may have been bitten or stung, tell them to seek \
-        medical help.
+        Answer their follow-up briefly — a few sentences, no filler. The \
+        verdict and safety facts already given are authoritative: do not \
+        contradict them, and do not invent new toxicity or venom claims. If \
+        you don't know, say so and tell them to check with a local expert, \
+        poison control, or a vet.
 
-        You may call get_location (species vary by region) or \
-        get_device_status (date/season) — only when it would change the \
-        answer. If the photo shows no creature, plant, or mushroom, say what \
-        you see in one sentence with no VERDICT line. Text follow-ups get \
-        brief, direct answers.
+        Never advise touching, handling, moving, or eating anything. If they \
+        may have been bitten or stung, tell them to seek medical help. If a \
+        pet may have eaten something toxic, tell them to call a vet now.
         """
-    }
 
     private var container: ModelContainer?
-    private var session: ChatSession?
     /// Conversation so far (user + assistant turns, think-blocks stripped).
     /// Kept here because each turn runs in a FRESH ChatSession — reusing a
     /// session's KV cache across turns is broken for Qwen3-VL in
@@ -93,26 +105,25 @@ final class MLXEngine: LLMEngine {
 
     func reset() {
         history = []
-        session = nil
     }
 
     /// One fresh ChatSession per turn (see `history` comment).
-    private func makeSession(_ container: ModelContainer) -> ChatSession {
+    private func makeSession(
+        _ container: ModelContainer, instructions: String, maxTokens: Int
+    ) -> ChatSession {
         ChatSession(
             container,
-            instructions: Self.instructions,
+            instructions: instructions,
             // Qwen's recommended sampling for instruct models; the repetition
             // penalty stops the degenerate "2023 and 2024. 2023 and 2024. …"
-            // loops a 4-bit 4B model falls into after tool-result injection.
-            // Keep the window at 64: at 128 the format's own "VERDICT" (from
-            // the think block / earlier context) is still in-window when the
-            // answer starts, the penalty vetoes completing the word, and the
-            // model stutters "VERD\nVERD\nVERD" (seen on device 2026-07-09).
-            // Whole-answer restart loops are longer than this window by
-            // design — loopCutIndex cuts those deterministically, and
-            // maxTokens is the hard stop when EOS never fires.
+            // loops a 4-bit 4B model falls into. Keep the window at 64: at 128
+            // a keyword the format requires (e.g. "VERDICT") is still
+            // in-window when the answer starts, the penalty vetoes completing
+            // the word, and the model stutters "VERD\nVERD\nVERD" (seen on
+            // device 2026-07-09). maxTokens is the hard stop when EOS never
+            // fires.
             generateParameters: GenerateParameters(
-                maxTokens: 250,
+                maxTokens: maxTokens,
                 temperature: 0.7,
                 topP: 0.8,
                 repetitionPenalty: 1.15,
@@ -152,34 +163,71 @@ final class MLXEngine: LLMEngine {
         guard let container else {
             return AsyncThrowingStream { $0.finish(throwing: EngineError.notLoaded) }
         }
-        let session = makeSession(container)
-        self.session = session
+        if let image {
+            return identify(image, container: container)
+        }
+        return followUp(prompt, container: container)
+    }
 
+    // MARK: stage 1 — identify, then let the table decide
+
+    /// Collects the model's identification in full (nothing is streamed to the
+    /// UI: the raw `CATEGORY:/ID:/FEATURES:` lines are machinery, not an
+    /// answer), runs the danger lookup, and emits the composed verdict.
+    private func identify(_ image: CIImage, container: ModelContainer) -> AsyncThrowingStream<
+        String, Error
+    > {
+        // A fresh photo is identified on its own — prior turns about a
+        // different creature would only bias the ID.
+        let session = makeSession(
+            container, instructions: Self.identifyInstructions, maxTokens: 160)
         let userMessage = Chat.Message.user(
-            prompt, images: image.map { [.ciImage($0)] } ?? [])
-        let turn = history + [userMessage]
-        DebugLog.log("turn start (history: \(history.count) msgs)")
-        let upstream = session.streamResponse(to: turn)
+            "Identify the organism in this photo.", images: [.ciImage(image)])
+        let upstream = session.streamResponse(to: [userMessage])
 
-        // Tap the stream: log raw chunks for debugging, and on completion
-        // fold the exchange into `history` for the next turn's replay.
+        return AsyncThrowingStream { continuation in
+            Task { @MainActor in
+                do {
+                    var raw = ""
+                    for try await chunk in upstream { raw += chunk }
+                    DebugLog.log("identify raw: \(Self.stripThinking(raw))")
+
+                    let result = DangerTable.verdict(modelText: Self.stripThinking(raw))
+                    DebugLog.log("verdict: \(result.verdict.map(String.init(describing:)) ?? "none")")
+
+                    continuation.yield(result.text)
+                    // History carries the composed verdict (not the raw ID
+                    // lines) so follow-ups reason from the facts the user saw.
+                    self.history = [
+                        .user("[photo of something the user found]"),
+                        .assistant(result.text),
+                    ]
+                    continuation.finish()
+                } catch {
+                    DebugLog.log("identify error: \(error)")
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    // MARK: text follow-ups
+
+    private func followUp(_ prompt: String, container: ModelContainer) -> AsyncThrowingStream<
+        String, Error
+    > {
+        let session = makeSession(
+            container, instructions: Self.followupInstructions, maxTokens: 300)
+        let userMessage = Chat.Message.user(prompt)
+        let upstream = session.streamResponse(to: history + [userMessage])
+        DebugLog.log("follow-up (history: \(history.count) msgs)")
+
         return AsyncThrowingStream { continuation in
             Task { @MainActor in
                 var reply = ""
                 do {
                     for try await chunk in upstream {
-                        DebugLog.log("chunk: \(chunk.debugDescription)")
-                        let candidate = reply + chunk
-                        if let cut = Self.loopCutIndex(candidate) {
-                            let kept = String(candidate[..<cut])
-                            if kept.count > reply.count {
-                                continuation.yield(String(kept.dropFirst(reply.count)))
-                            }
-                            reply = kept.trimmingCharacters(in: .whitespacesAndNewlines)
-                            DebugLog.log("repetition loop detected — cut reply at \(reply.count) chars")
-                            break
-                        }
-                        reply = candidate
+                        reply += chunk
                         continuation.yield(chunk)
                     }
                     self.commit(user: userMessage, reply: reply)
@@ -193,30 +241,26 @@ final class MLXEngine: LLMEngine {
         }
     }
 
-    /// Qwen3-VL-4B-4bit sometimes fails to emit EOS after a complete verdict
-    /// and restarts the whole answer ("…move it.\n\nVERD\n\nVERDICT: …") —
-    /// the loop is a whole answer long, so the repetition penalty alone can't
-    /// reliably kill it. Any "VERD" appearing after the first VERDICT means
-    /// the format is restarting; cut generation right before it.
-    private static func loopCutIndex(_ text: String) -> String.Index? {
-        guard let first = text.range(of: "VERDICT") else { return nil }
-        return text.range(of: "VERD", range: first.upperBound..<text.endIndex)?.lowerBound
-    }
-
     /// Append a finished exchange to the replayed history. Think-blocks are
     /// dropped (Qwen convention: prior-turn reasoning is not replayed).
     private func commit(user: Chat.Message, reply: String) {
-        var text = reply
-        while let start = text.range(of: "<think>") {
-            guard let end = text.range(of: "</think>", range: start.upperBound..<text.endIndex)
-            else {
-                text.removeSubrange(start.lowerBound..<text.endIndex)
+        history.append(user)
+        history.append(
+            .assistant(
+                Self.stripThinking(reply).trimmingCharacters(in: .whitespacesAndNewlines)))
+    }
+
+    /// Qwen 3.x emits `<think>…</think>`; strip it before parsing or replaying.
+    private static func stripThinking(_ text: String) -> String {
+        var s = text
+        while let start = s.range(of: "<think>") {
+            guard let end = s.range(of: "</think>", range: start.upperBound..<s.endIndex) else {
+                s.removeSubrange(start.lowerBound..<s.endIndex)
                 break
             }
-            text.removeSubrange(start.lowerBound..<end.upperBound)
+            s.removeSubrange(start.lowerBound..<end.upperBound)
         }
-        history.append(user)
-        history.append(.assistant(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     enum EngineError: LocalizedError {
