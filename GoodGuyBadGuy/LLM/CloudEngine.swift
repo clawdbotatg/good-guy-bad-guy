@@ -29,6 +29,12 @@ enum CloudConfig {
 final class CloudEngine: LLMEngine {
     let modelName = "Cloud"
 
+    /// Which model the server should name the organism with. "claude" = the
+    /// box's free subscription; a BANKR model id = that vision model via the
+    /// gateway. Sent as the `X-Model` header; the server's danger table always
+    /// owns the verdict regardless.
+    private var serverModel = "claude"
+
     private struct Classification: Decodable {
         let id: String
         let verdict: String?  // "good" | "bad" | "caution" | null
@@ -48,7 +54,11 @@ final class CloudEngine: LLMEngine {
         }
     }
 
-    func setModel(_ id: String) {}
+    /// For cloud brains, `id` is the server model to name with (e.g. "claude",
+    /// "gemini-3.1-pro"). ChatStore passes the selected brain's `serverModel`.
+    func setModel(_ id: String) {
+        serverModel = id.isEmpty ? "claude" : id
+    }
     func reset() {}
 
     /// "Load" = a reachability probe against /health. No download.
@@ -101,6 +111,7 @@ final class CloudEngine: LLMEngine {
         var request = URLRequest(url: CloudConfig.baseURL.appendingPathComponent("classify"))
         request.httpMethod = "POST"
         request.setValue(CloudConfig.token, forHTTPHeaderField: "X-Auth-Token")
+        request.setValue(serverModel, forHTTPHeaderField: "X-Model")
         request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
         request.httpBody = jpeg
         request.timeoutInterval = 120

@@ -56,8 +56,17 @@ final class ChatStore {
         #else
         localEngine = MLXEngine()
         #endif
-        if !BrainCatalog.isCloud(currentModelID) {
-            localEngine.setModel(currentModelID)
+        configureEngine(for: currentModelID)
+    }
+
+    /// Point the selected brain's engine at the right model: a local brain sets
+    /// the MLX repo id; a cloud brain sets the server model the classifier runs.
+    private func configureEngine(for id: String) {
+        let model = BrainCatalog.model(for: id)
+        if model.isCloud {
+            cloudEngine.setModel(model.serverModel ?? "claude")
+        } else {
+            localEngine.setModel(id)
         }
     }
 
@@ -123,7 +132,7 @@ final class ChatStore {
         currentModelID = id
         UserDefaults.standard.set(id, forKey: Self.modelKey)
         clear()
-        engine.setModel(id)
+        configureEngine(for: id)
         modelState = .idle
         Task { await loadModel() }
     }

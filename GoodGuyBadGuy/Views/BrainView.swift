@@ -94,19 +94,16 @@ struct BrainView: View {
                     .font(.title3)
                     .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                     .frame(width: 32)
-                HStack(spacing: 6) {
-                    if BrainCatalog.isCloud(model.id) {
-                        Image(systemName: "cloud.fill")
-                            .font(.caption)
-                            .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(model.name).font(.subheadline.weight(.semibold))
+                        if model.recommended {
+                            Image(systemName: "star.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.yellow)
+                        }
                     }
-                    Text(model.name).font(.subheadline.weight(.semibold))
-                    if model.recommended {
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.yellow)
-                    }
-                    Text(model.brainRating).font(.caption)
+                    Text("\(model.brainRating) \(model.locationIcon)").font(.caption)
                 }
                 .lineLimit(1)
                 Spacer()

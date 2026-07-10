@@ -170,12 +170,14 @@ def classify_with_claude(image_path, timeout=90):
     return parsed
 
 
-def classify_with_bankr(image_path, mime, timeout=45):
-    """Fallback path: a vision model via the BANKR LLM gateway (OpenAI-compatible).
+def classify_with_bankr(image_path, mime, timeout=45, model=None):
+    """A vision model via the BANKR LLM gateway (OpenAI-compatible).
 
-    Default model is a Gemini flash-lite — cheap, fast, vision-capable, and a
-    *different* provider than the box's Claude subscription, so it still answers
-    when the primary claude -p path is down. Only used if a key is configured.
+    Used two ways: as the automatic fallback when claude -p is down (default
+    model `BANKR_MODEL`, a Gemini flash-lite — a *different* provider than the
+    box's Claude, so it survives a Claude outage), and as the primary path when
+    the app explicitly asks for a BANKR model via the `X-Model` header (the
+    Gemini brains in the picker). Needs a configured key.
     """
     if not BANKR_KEY:
         return {"error": "no fallback key configured"}
@@ -185,7 +187,7 @@ def classify_with_bankr(image_path, mime, timeout=45):
         b64 = base64.b64encode(f.read()).decode()
     data_uri = f"data:{mime};base64,{b64}"
     body = {
-        "model": BANKR_MODEL,
+        "model": model or BANKR_MODEL,
         "messages": [{
             "role": "user",
             "content": [
@@ -321,6 +323,12 @@ class Handler(BaseHTTPRequestHandler):
         ctype = self.headers.get("Content-Type", "image/jpeg")
         ext = "png" if "png" in ctype else "jpg"
 
+        # Which brain the app picked. "claude"/"fable"/absent → the box's free
+        # subscription; anything else → that BANKR vision model (the Gemini
+        # brains). The verdict is danger.resolve's either way.
+        req_model = (self.headers.get("X-Model") or "claude").strip()
+        want_claude = req_model.lower() in ("", "claude", "fable", "auto")
+
         started = time.time()
         # Always write to a temp file (claude reads by path); keep it only if
         # DEBUG_STORE, otherwise delete in finally.
@@ -331,31 +339,45 @@ class Handler(BaseHTTPRequestHandler):
             f.write(image)
 
         try:
-            with _claude_slots:
-                claude_raw = classify_with_claude(image_path)
+            def run_claude():
+                with _claude_slots:
+                    return classify_with_claude(image_path)
 
-            fallback_raw = None
-            if DEBUG_STORE:
-                # Debug: run BOTH so we can compare, regardless of claude health.
-                fallback_raw = classify_with_bankr(image_path, ctype)
-            elif "error" in claude_raw:
-                # Production: only reach for the fallback when claude failed.
-                fallback_raw = classify_with_bankr(image_path, ctype)
+            def run_bankr():
+                return classify_with_bankr(
+                    image_path, ctype, model=None if want_claude else req_model)
 
-            chosen = claude_raw if "error" not in claude_raw else fallback_raw
+            # Primary is whichever brain the app asked for; the other engine is
+            # the automatic fallback (and, in debug mode, always run so we can
+            # compare the two on every photo).
+            if want_claude:
+                primary_name, primary = "claude", run_claude()
+                other_name, other_fn = "bankr:" + BANKR_MODEL, run_bankr
+            else:
+                primary_name, primary = "bankr:" + req_model, run_bankr()
+                other_name, other_fn = "claude", run_claude
+
+            other = None
+            if DEBUG_STORE or "error" in primary:
+                other = other_fn()
+
+            chosen = primary if "error" not in primary else other
+            chosen_name = primary_name if chosen is primary else other_name
             if not chosen or "error" in (chosen or {"error": 1}):
                 self._json(502, {
                     "error": "classification unavailable",
-                    "claude": claude_raw, "fallback": fallback_raw,
+                    "primary": {primary_name: primary},
+                    "fallback": {other_name: other},
                 })
                 return
 
             result = finalize(chosen)
-            result["source"] = "claude" if chosen is claude_raw else "fallback"
+            result["source"] = chosen_name
             result["elapsed_ms"] = int((time.time() - started) * 1000)
 
             if DEBUG_STORE:
-                self._debug_log(image_path, claude_raw, fallback_raw, result)
+                self._debug_log(image_path, primary_name, primary,
+                                other_name, other, result)
             self._json(200, result)
         finally:
             if not DEBUG_STORE:
@@ -364,12 +386,13 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
 
-    def _debug_log(self, image_path, claude_raw, fallback_raw, result):
+    def _debug_log(self, image_path, primary_name, primary, other_name, other, result):
         record = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "image": os.path.relpath(image_path, HERE),
-            "claude": claude_raw,
-            "fallback": fallback_raw,
+            "chosen": result.get("source"),
+            "primary": {"engine": primary_name, "out": primary},
+            "fallback": {"engine": other_name, "out": other},
             "result": result,
         }
         with open(LOG_PATH, "a") as f:
