@@ -46,6 +46,19 @@ or matcher change**, and add the case that motivated your change.
 - **Image-first**: a photo auto-sends on capture/pick — the picture is the
   question. The composer stays hidden until the first verdict, then appears
   for follow-ups (`ChatView`).
+- **The Brain (swappable model)**: a persistent title + `BrainView` section
+  sit above a content area that swaps between the photo prompt and the chat.
+  `BrainCatalog` (no MLX import, so it compiles for the simulator too) is a
+  curated list of phone-viable VLMs; `MLXEngine.configuration(for:)` maps an
+  id to a `ModelConfiguration` with the right stop tokens (Qwen `<|im_end|>`,
+  Gemma `<end_of_turn>` — omit them and the model never stops). `ChatStore`
+  owns `currentModelID` + `downloadedModelIDs` (persisted in UserDefaults),
+  and `selectModel` reloads the brain and starts a fresh scan. Switching sets
+  `container = nil` in the engine so ARC frees the old weights before the new
+  ones load. Curated on purpose: an arbitrary repo id may not be a VLM, may
+  not route, or (8B Qwen) may load then jetsam-die. Screenshot hooks:
+  `GGBG_DEMO=1` auto-sends a photo, `GGBG_BRAIN_OPEN=1` starts the Brain
+  expanded.
 - **Tools pruned to offline-only**: `get_location` (region → species priors,
   in `MoreTools`) + `get_device_status` (date → season, in `PhoneTools`).
   WebTools, contacts, calendar, reminders, steps, clipboard, weather are

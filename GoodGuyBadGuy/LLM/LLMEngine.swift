@@ -8,8 +8,11 @@ import Foundation
 @MainActor
 protocol LLMEngine {
     var modelName: String { get }
-    /// Download/prepare the model. `onProgress` reports 0...1 of the download.
+    /// Download/prepare the current model. `onProgress` reports 0...1.
     func load(onProgress: @escaping @MainActor (Double) -> Void) async throws
+    /// Switch which model the brain runs. Drops the loaded model so the next
+    /// `load()` downloads/loads the new one. No-op if already selected.
+    func setModel(_ id: String)
     /// Drop conversation history (new identification).
     func reset()
     /// With an `image`: identify it and stream the composed verdict.
@@ -25,23 +28,35 @@ protocol LLMEngine {
 /// cats" and the table must override that to BAD GUY.
 @MainActor
 final class MockEngine: LLMEngine {
-    let modelName = "MockEngine (simulator)"
+    private var modelID = BrainCatalog.defaultID
+    /// Models the sim has already "downloaded" this launch — a switch back is
+    /// then instant, mirroring the device's on-disk cache.
+    private var downloaded: Set<String> = []
 
-    /// What the naming pass would return on device.
+    /// What the device's naming pass would return; runs the real DangerTable.
     private static let cannedName = "Daylily"
 
+    var modelName: String { BrainCatalog.displayName(for: modelID) }
+
+    func setModel(_ id: String) { modelID = id }
+
     func load(onProgress: @escaping @MainActor (Double) -> Void) async throws {
+        if downloaded.contains(modelID) {
+            onProgress(1)
+            return
+        }
         for step in 1...20 {
-            try await Task.sleep(for: .milliseconds(100))
+            try await Task.sleep(for: .milliseconds(80))
             onProgress(Double(step) / 20)
         }
+        downloaded.insert(modelID)
     }
 
     func reset() {}
 
     func respond(to prompt: String, image: CIImage?) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            Task { @MainActor in
+        AsyncThrowingStream<String, Error> { continuation in
+            let task = Task { @MainActor in
                 guard image != nil else {
                     continuation.yield(
                         "Mock simulator engine (MLX needs a real device's GPU). "
@@ -59,6 +74,7 @@ final class MockEngine: LLMEngine {
                     DangerTable.verdict(name: Self.cannedName, category: "plant").text)
                 continuation.finish()
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }

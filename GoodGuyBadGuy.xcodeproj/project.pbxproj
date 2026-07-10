@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		06D472B13AD3E76F6B7C76F8 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = CAFB5BD214778C30A58F864F /* MLXVLM */; };
 		0B5FC45D16F3DE2FC2057A2C /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 3F21D35FE053E80790629758 /* MLXLMCommon */; };
+		0CF144AD4C6B2ACAEFA17DF7 /* BrainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24A554E68A45977EA030BADC /* BrainView.swift */; };
 		1EF5037425384FD3CE4BD245 /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 522A8E1F03BB7C62680271D9 /* HuggingFace */; };
 		28022D78B3BE30B1C92B831F /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68C1146AE32C56A4752EEF9B /* MessageBubble.swift */; };
 		2F7E0F03BF189E760DF02C26 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9B6ED9A7D5DD185AC6E0BE7F /* Assets.xcassets */; };
@@ -17,6 +18,7 @@
 		5D9594A14403850E4FE15D87 /* LLMEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06B4FE9396A536B0DD6D79DC /* LLMEngine.swift */; };
 		5E7F14CB01E5D228255BF425 /* MoreTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D110805D05D0582BD9A34A4E /* MoreTools.swift */; };
 		5ECF5396997BD588B224F266 /* DangerTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14D088071876DCC53C6E9008 /* DangerTable.swift */; };
+		6186DD6461D88855DAEB103D /* BrainCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EFB9F5B3B1BA7CCAFF0E4BF /* BrainCatalog.swift */; };
 		6404AED111A8F1B1B9E3DC7C /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = A82623C6DD0E6B07178B8125 /* MLXHuggingFace */; };
 		6CE6DE40EA78AC79ABAEEE2C /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = A26BDF9F45B22BFC03626C1C /* MLXLLM */; };
 		72938E55ECB0C5504A28EEC4 /* PhoneTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D8DF9483E37B11A6358E1A2 /* PhoneTools.swift */; };
@@ -34,12 +36,14 @@
 		06B4FE9396A536B0DD6D79DC /* LLMEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMEngine.swift; sourceTree = "<group>"; };
 		14D088071876DCC53C6E9008 /* DangerTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DangerTable.swift; sourceTree = "<group>"; };
 		238D4338CECD33B1B87F0AF0 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
+		24A554E68A45977EA030BADC /* BrainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainView.swift; sourceTree = "<group>"; };
 		2E2FE31FFB535D9CABA26D57 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
 		5D8DF9483E37B11A6358E1A2 /* PhoneTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneTools.swift; sourceTree = "<group>"; };
 		5E859DBA326203318BE731B2 /* GoodGuyBadGuy.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GoodGuyBadGuy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F0ECFF5BA578C1103432B88 /* GoodGuyBadGuyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoodGuyBadGuyApp.swift; sourceTree = "<group>"; };
 		68C1146AE32C56A4752EEF9B /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
 		89A1355E5B1B277EFBFFF2F6 /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
+		8EFB9F5B3B1BA7CCAFF0E4BF /* BrainCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainCatalog.swift; sourceTree = "<group>"; };
 		9B6ED9A7D5DD185AC6E0BE7F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9D9AD8DF513D954D6FF1C6F3 /* MLXEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXEngine.swift; sourceTree = "<group>"; };
 		A7F9371BFBDB987EC7A11459 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
@@ -111,6 +115,7 @@
 		513029C492554C8B1BD707E6 /* LLM */ = {
 			isa = PBXGroup;
 			children = (
+				8EFB9F5B3B1BA7CCAFF0E4BF /* BrainCatalog.swift */,
 				2E2FE31FFB535D9CABA26D57 /* ChatStore.swift */,
 				F60F43DACEAE670B2323F170 /* DangerData.swift */,
 				14D088071876DCC53C6E9008 /* DangerTable.swift */,
@@ -125,6 +130,7 @@
 		B25CC56D97B30DD47C54063E /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				24A554E68A45977EA030BADC /* BrainView.swift */,
 				B5BEC1D74A7489159412622C /* CameraPicker.swift */,
 				BDE2068A531901E5694F2710 /* ChatView.swift */,
 				68C1146AE32C56A4752EEF9B /* MessageBubble.swift */,
@@ -222,6 +228,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6186DD6461D88855DAEB103D /* BrainCatalog.swift in Sources */,
+				0CF144AD4C6B2ACAEFA17DF7 /* BrainView.swift in Sources */,
 				8F76A5A9697A955E5B3E1FF4 /* CameraPicker.swift in Sources */,
 				4246F663ABE0D4BDE40828E5 /* ChatMessage.swift in Sources */,
 				B66EEA05EC9A4E9507E2BF90 /* ChatStore.swift in Sources */,

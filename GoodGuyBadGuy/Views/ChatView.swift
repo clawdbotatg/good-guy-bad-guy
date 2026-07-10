@@ -9,40 +9,24 @@ struct ChatView: View {
     @State private var showCamera = false
     @State private var showPhotoPicker = false
     @State private var photoItem: PhotosPickerItem?
-    @State private var downloadStartedAt: Date?
     @FocusState private var inputFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                switch store.modelState {
-                case .ready:
-                    messageList
-                    // Image-first: no composer until the first verdict is in;
-                    // then it appears for follow-up questions.
-                    if !store.messages.isEmpty { composer }
-                case .idle, .downloading:
-                    loadingScreen
-                case .failed(let message):
-                    failureScreen(message)
-                }
-            }
-            .navigationTitle("Good Guy Bad Guy")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("New Chat", systemImage: "square.and.pencil") {
-                        store.clear()
-                    }
-                    .disabled(store.messages.isEmpty)
-                }
-            }
+        // Title and Brain stay put; only `content` swaps between the photo
+        // prompt and the chat.
+        VStack(spacing: 0) {
+            header
+            BrainView(store: store)
+                .padding(.top, 2)
+                .padding(.bottom, 8)
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task {
             await store.loadModel()
             // Demo hook for automated simulator screenshots: launch with
             // SIMCTL_CHILD_GGBG_DEMO=1 to auto-send a photo so the verdict
-            // banner renders without driving taps.
+            // renders without driving taps.
             if ProcessInfo.processInfo.environment["GGBG_DEMO"] != nil,
                 store.messages.isEmpty
             {
@@ -70,6 +54,46 @@ struct ChatView: View {
                 }
                 self.photoItem = nil
             }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Good Guy Bad Guy")
+                    .font(.title.bold())
+                Text("On-device · works offline")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !store.messages.isEmpty {
+                Button {
+                    store.clear()
+                } label: {
+                    Label("New scan", systemImage: "arrow.counterclockwise")
+                        .font(.subheadline)
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch store.modelState {
+        case .ready:
+            VStack(spacing: 0) {
+                messageList
+                // Image-first: no composer until the first verdict is in; then
+                // it appears for follow-up questions.
+                if !store.messages.isEmpty { composer }
+            }
+        case .idle, .downloading:
+            preparingScreen
+        case .failed(let message):
+            failureScreen(message)
         }
     }
 
@@ -103,7 +127,7 @@ struct ChatView: View {
             Text("Good guy or bad guy?")
                 .font(.title2.bold())
             Text(
-                "Found a snake, spider, bug, plant, or mushroom? Snap a photo — no typing needed. The on-device model says what it is and whether it's dangerous, with zero bars."
+                "Found a snake, spider, bug, plant, or mushroom? Snap a photo — no typing needed. It names what it is, then tells you if it's dangerous."
             )
             .font(.footnote)
             .foregroundStyle(.secondary)
@@ -119,13 +143,8 @@ struct ChatView: View {
             .buttonStyle(.borderedProminent)
             Button("Photo Library") { showPhotoPicker = true }
                 .font(.subheadline)
-            Text("Running \(store.modelName)\nentirely on this device.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 8)
         }
-        .padding(.top, 48)
+        .padding(.top, 40)
         .padding(.horizontal, 24)
     }
 
@@ -147,7 +166,7 @@ struct ChatView: View {
                     .font(.title)
             }
 
-            TextField(speech.isRecording ? "Listening…" : "Message", text: $draft, axis: .vertical)
+            TextField(speech.isRecording ? "Listening…" : "Ask a follow-up", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -191,40 +210,26 @@ struct ChatView: View {
         .padding(.horizontal)
     }
 
-    private var loadingScreen: some View {
-        VStack(spacing: 16) {
+    /// Shown while the brain downloads or wakes up. The live progress is in
+    /// the Brain section above; this just keeps the content area calm.
+    private var preparingScreen: some View {
+        VStack(spacing: 12) {
             Spacer()
-            TimelineView(.periodic(from: .now, by: 0.25)) { context in
-                // The weights are one giant file, so the real byte fraction can
-                // sit still for minutes. Sweep to 90% over the first minute and
-                // crawl after; the real fraction wins whenever it's ahead.
-                let real: Double =
-                    if case .downloading(let fraction) = store.modelState {
-                        fraction
-                    } else { 0 }
-                let elapsed =
-                    downloadStartedAt.map { context.date.timeIntervalSince($0) } ?? 0
-                let sweep =
-                    elapsed < 60
-                    ? elapsed / 60 * 0.90
-                    : 0.90 + min((elapsed - 60) / 300, 1) * 0.09
-                let displayed = min(max(real, sweep), 0.99)
-                ProgressView(value: displayed) {
-                    Text("Downloading model…")
-                } currentValueLabel: {
-                    Text("\(Int(displayed * 100))% of \(store.modelName)")
-                }
-                .padding(.horizontal, 40)
-            }
-            Text("One-time download — after this, everything runs offline.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+            ProgressView()
+            Text(
+                store.isDownloaded(store.currentModelID)
+                    ? "Waking up \(store.modelName)…"
+                    : "Downloading \(store.modelName)…"
+            )
+            .font(.headline)
+            Text(
+                "First time takes a few minutes on Wi-Fi. After that it's instant and works with no signal."
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 40)
             Spacer()
-        }
-        .onAppear {
-            if downloadStartedAt == nil { downloadStartedAt = Date() }
         }
     }
 
@@ -234,7 +239,7 @@ struct ChatView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.largeTitle)
                 .foregroundStyle(.orange)
-            Text("Couldn't load the model")
+            Text("Couldn't load \(store.modelName)")
                 .font(.headline)
             Text(message)
                 .font(.footnote)

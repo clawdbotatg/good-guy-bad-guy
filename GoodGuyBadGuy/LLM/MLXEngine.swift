@@ -29,15 +29,27 @@ import Tokenizers
 /// daylily "safe for cats", which is lethally wrong, so it is never asked.
 @MainActor
 final class MLXEngine: LLMEngine {
-    /// Swap the model by pointing at any entry in `LLMRegistry` (text-only),
-    /// `VLMRegistry` (vision), or any mlx-community repo id — linking MLXVLM
-    /// makes the shared loader route vision models automatically.
-    /// Qwen3-VL-8B-4bit (5.8 GB of weights) LOADS on a 12 GB iPhone 17 Pro but
-    /// jetsam SIGKILLs it as soon as generation starts (prefill + KV cache +
-    /// vision tower overflow the per-app budget, even with the
-    /// increased-memory-limit entitlement) — verified on device 2026-07-07.
-    /// 4B is the real ceiling for phones today.
-    private static let model = VLMRegistry.qwen3VL4BInstruct4Bit
+    /// Which brain runs, as a `BrainCatalog` repo id. The UI switches it via
+    /// `setModel`; `BrainCatalog` is the curated set of models that actually
+    /// fit and load (the 8B Qwen loads on a 12 GB phone but jetsam-kills the
+    /// instant it generates — verified 2026-07-07; 4B is the ceiling).
+    private var modelID = BrainCatalog.defaultID
+
+    /// Build a real `ModelConfiguration` for a catalog id. The stop tokens
+    /// matter: without them a Qwen model never emits EOS and runs to the token
+    /// cap every turn, and Gemma likewise. Keyed off the id so any catalog
+    /// model works without a per-model table here.
+    private static func configuration(for id: String) -> ModelConfiguration {
+        let eos: Set<String>
+        if id.contains("Qwen") {
+            eos = ["<|im_end|>"]
+        } else if id.lowercased().contains("gemma") {
+            eos = ["<end_of_turn>"]
+        } else {
+            eos = []
+        }
+        return ModelConfiguration(id: id, extraEOSTokens: eos)
+    }
 
     /// Pass 1. As little context as possible: look, and name it.
     private static let nameInstructions = """
@@ -60,9 +72,10 @@ final class MLXEngine: LLMEngine {
         """
 
     /// Follow-up questions after a verdict has been rendered.
-    private static let followupInstructions = """
+    private var followupInstructions: String {
+        """
         You are Good Guy Bad Guy, a wildlife-safety helper running fully \
-        on-device on the user's iPhone (\(model.name) via MLX — no cloud, \
+        on-device on the user's iPhone (\(modelName) via MLX — no cloud, \
         photos never leave the phone). The user photographed something and \
         already received a verdict, shown earlier in this conversation.
 
@@ -76,6 +89,7 @@ final class MLXEngine: LLMEngine {
         may have been bitten or stung, tell them to seek medical help. If a \
         pet may have eaten something toxic, tell them to call a vet now.
         """
+    }
 
     private var container: ModelContainer?
     /// Conversation so far (user + assistant turns, think-blocks stripped).
@@ -86,7 +100,17 @@ final class MLXEngine: LLMEngine {
     /// stays correct.
     private var history: [Chat.Message] = []
 
-    var modelName: String { Self.model.name }
+    var modelName: String { BrainCatalog.displayName(for: modelID) }
+
+    func setModel(_ id: String) {
+        guard id != modelID else { return }
+        DebugLog.log("setModel: \(modelID) -> \(id)")
+        modelID = id
+        // Drop the loaded brain so the next load() downloads/loads the new
+        // one; ARC frees the old ModelContainer's weights.
+        container = nil
+        history = []
+    }
 
     func load(onProgress: @escaping @MainActor (Double) -> Void) async throws {
         guard container == nil else { return }
@@ -95,9 +119,10 @@ final class MLXEngine: LLMEngine {
         // per-app memory budget.
         MLX.GPU.set(cacheLimit: 20 * 1024 * 1024)
 
-        DebugLog.log("load() starting, model: \(Self.model.name)")
+        let configuration = Self.configuration(for: modelID)
+        DebugLog.log("load() starting, model: \(modelID)")
         let container = try await #huggingFaceLoadModelContainer(
-            configuration: Self.model,
+            configuration: configuration,
             progressHandler: { progress in
                 let fraction = progress.fractionCompleted
                 DebugLog.log("download progress: \(fraction) (\(progress.completedUnitCount)/\(progress.totalUnitCount))")
@@ -273,7 +298,7 @@ final class MLXEngine: LLMEngine {
         String, Error
     > {
         let session = makeSession(
-            container, instructions: Self.followupInstructions, maxTokens: 300, withTools: true)
+            container, instructions: followupInstructions, maxTokens: 300, withTools: true)
         let userMessage = Chat.Message.user(prompt)
         let upstream = session.streamResponse(to: history + [userMessage])
         DebugLog.log("follow-up (history: \(history.count) msgs)")
