@@ -62,6 +62,20 @@ final class MLXEngine: LLMEngine {
         Another system decides that. Output the three lines only.
         """
 
+    /// Fallback when the structured reply gives no usable name. The app must
+    /// always tell the user what it thinks the thing is, so we drop the
+    /// format entirely and just ask.
+    private static let nameOnlyInstructions = """
+        Look at the photo and name the animal, plant, or mushroom in it.
+
+        Reply with ONLY the name — two to six words, no sentence, no \
+        punctuation, no explanation. For example: Cellar spider, or Eastern \
+        gray squirrel, or Fly agaric mushroom.
+
+        If you truly cannot tell what it is, reply with exactly: unknown
+        Never say whether it is dangerous or safe.
+        """
+
     /// Stage 2 is the app. This is only for follow-up questions after a
     /// verdict has already been rendered.
     private static let followupInstructions = """
@@ -204,8 +218,28 @@ final class MLXEngine: LLMEngine {
                     for try await chunk in upstream { raw += chunk }
                     DebugLog.log("identify raw: \(Self.stripThinking(raw))")
 
-                    let result = DangerTable.verdict(modelText: Self.stripThinking(raw))
-                    DebugLog.log("verdict: \(result.verdict.map(String.init(describing:)) ?? "none")")
+                    var identification = DangerTable.identify(
+                        modelText: Self.stripThinking(raw))
+
+                    // The structured format failed us — ask the plain question
+                    // rather than showing a verdict with no identification.
+                    if identification.name == nil, !identification.notAnOrganism {
+                        DebugLog.log("no name parsed — second pass, name only")
+                        if let name = try await self.nameOnly(image, container: container) {
+                            DebugLog.log("second pass name: \(name)")
+                            identification = DangerTable.Identification(
+                                category: identification.category,
+                                name: name,
+                                features: identification.features,
+                                notAnOrganism: false,
+                                uncertain: false
+                            )
+                        }
+                    }
+
+                    let result = DangerTable.verdict(identification)
+                    DebugLog.log(
+                        "id: \(identification.name ?? "none") verdict: \(result.verdict.map(String.init(describing:)) ?? "none")")
 
                     continuation.yield(result.text)
                     // History carries the composed verdict (not the raw ID
@@ -221,6 +255,25 @@ final class MLXEngine: LLMEngine {
                 }
             }
         }
+    }
+
+    /// Second pass: no format, just "what is it?". Returns nil when the model
+    /// says `unknown` or hands back something unusable.
+    private func nameOnly(_ image: CIImage, container: ModelContainer) async throws -> String? {
+        let session = makeSession(
+            container, instructions: Self.nameOnlyInstructions, maxTokens: 40)
+        let message = Chat.Message.user(
+            "What is this? Name it.", images: [.ciImage(image)])
+        var raw = ""
+        for try await chunk in session.streamResponse(to: [message]) { raw += chunk }
+
+        // Take the first real line and strip the decoration a small model adds.
+        let line = DangerTable.firstMeaningfulLine(Self.stripThinking(raw))
+        guard let line, line.count <= 60,
+            line.range(of: "unknown", options: .caseInsensitive) == nil,
+            !line.contains("<")
+        else { return nil }
+        return line
     }
 
     // MARK: text follow-ups

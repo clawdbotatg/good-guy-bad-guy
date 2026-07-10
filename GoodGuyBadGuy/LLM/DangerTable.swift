@@ -63,21 +63,64 @@ enum DangerTable {
 
     // MARK: verdict
 
-    /// Turn the identify stage's raw text into a verdict the app can stand behind.
-    static func verdict(modelText: String) -> VerdictResult {
-        // A 4B model sometimes parrots the prompt's own template back at us.
-        // Those lines must never reach the matcher: the instruction listing
-        // the categories contains the word "scorpion", which once turned a
-        // harmless cellar spider into a scorpion warning (device, 2026-07-09).
+    /// What the model saw, pulled out of its raw reply. The engine may take a
+    /// second pass at the name before asking for a verdict.
+    struct Identification {
+        let category: String
+        /// nil when the model gave no usable name (or parroted a placeholder).
+        let name: String?
+        let features: String?
+        /// The photo contains no living thing.
+        let notAnOrganism: Bool
+        /// The model hedged ("(uncertain)"). Must be captured here:
+        /// `displayName` strips the hedge out of `name`, so it can't be
+        /// recovered downstream.
+        let uncertain: Bool
+    }
+
+    /// Parse the identify stage's raw text. A 4B model sometimes parrots the
+    /// prompt's own template back at us, and those lines must never reach the
+    /// matcher: the instruction listing the categories contains the word
+    /// "scorpion", which once turned a harmless cellar spider into a scorpion
+    /// warning (device, 2026-07-09).
+    static func identify(modelText: String) -> Identification {
         let cleaned = stripEchoedTemplate(modelText)
         let parsed = parse(cleaned)
-        let category = knownCategory(parsed.category)
-        let features = parsed.features
 
-        // Nothing living in frame: answer plainly, no banner.
         if (parsed.id ?? cleaned).range(of: "not a plant or animal", options: .caseInsensitive)
             != nil
         {
+            return Identification(
+                category: "other", name: nil, features: nil, notAnOrganism: true,
+                uncertain: false)
+        }
+
+        // A short unlabeled reply ("This is a leopard gecko.") is accepted as
+        // the ID; anything longer is prose we shouldn't mine for species names.
+        let idText = parsed.id ?? (cleaned.count <= 200 ? cleaned : nil)
+        let hedged = ["uncertain", "not sure", "unknown"].contains {
+            idText?.range(of: $0, options: .caseInsensitive) != nil
+        }
+        return Identification(
+            category: knownCategory(parsed.category),
+            name: displayName(idText),
+            features: parsed.features,
+            notAnOrganism: false,
+            uncertain: hedged
+        )
+    }
+
+    /// Turn the identify stage's raw text into a verdict the app can stand behind.
+    static func verdict(modelText: String) -> VerdictResult {
+        verdict(identify(modelText: modelText))
+    }
+
+    static func verdict(_ identification: Identification) -> VerdictResult {
+        let category = identification.category
+        let features = identification.features
+
+        // Nothing living in frame: answer plainly, no banner.
+        if identification.notAnOrganism {
             return VerdictResult(
                 verdict: nil,
                 text:
@@ -85,30 +128,20 @@ enum DangerTable {
             )
         }
 
-        // The identification, if the model gave us a real one. A short
-        // unlabeled reply ("This is a leopard gecko.") is accepted as the ID;
-        // anything longer is prose we shouldn't mine for species names.
-        let idText = parsed.id ?? (cleaned.count <= 200 ? cleaned : nil)
-        let name = displayName(idText)
-
         // Without a name we have nothing to look up, and we will not guess
         // from stray words in the reply.
-        guard let name, let idText else {
+        guard let name = identification.name else {
             return compose(
                 .caution, nil, features,
-                "I couldn't read an identification from the photo, so I can't tell you whether it's safe. Treat it as unknown: keep your distance, and don't touch or eat it."
+                "I couldn't identify what's in the photo, so I can't tell you whether it's safe. Try another angle with better light and the creature filling more of the frame. Until then treat it as unknown: keep your distance, and don't touch or eat it."
             )
         }
-
-        let uncertain =
-            idText.range(of: "uncertain", options: .caseInsensitive) != nil
-            || idText.range(of: "not sure", options: .caseInsensitive) != nil
-            || idText.range(of: "unknown", options: .caseInsensitive) != nil
+        let uncertain = identification.uncertain
 
         // Match on the identification, then on what the model says it saw —
         // never on the whole raw reply.
         let best =
-            bestMatch(in: idText)?.entry
+            bestMatch(in: name)?.entry
             ?? features.flatMap { bestMatch(in: $0)?.entry }
 
         if let best {
@@ -208,8 +241,10 @@ enum DangerTable {
             case .badGuy: "BAD GUY"
             case .caution: "CAUTION"
             }
+        // The ID line is never omitted: the user asked what it is, and
+        // "couldn't tell" is an honest answer to that question.
         var lines = ["VERDICT: \(label)"]
-        if let name { lines.append("ID: \(name.prefix(90))") }
+        lines.append("ID: \(name.map { String($0.prefix(90)) } ?? "Couldn't identify it")")
         if let saw, !saw.isEmpty { lines.append("SAW: \(saw.prefix(160))") }
         lines.append("")
         lines.append(note)
@@ -253,6 +288,17 @@ enum DangerTable {
             }
         }
         return (category, id, features)
+    }
+
+    /// First non-empty line, stripped of the quotes, bullets, and trailing
+    /// punctuation a small model wraps a bare answer in.
+    static func firstMeaningfulLine(_ text: String) -> String? {
+        for line in stripEchoedTemplate(text).split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(
+                in: CharacterSet(charactersIn: " \t*-#•>\"'.,;:"))
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
     }
 
     /// Tolerant of the decoration a small model sprinkles on labels:
