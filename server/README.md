@@ -18,8 +18,10 @@ Identification is tiered:
 
 1. **`claude -p`** on this box's subscription — free, frontier-quality. Reads
    the image, names the organism, proposes a verdict + note.
-2. **Fallback** (Gemini Flash-Lite) — only if claude is unavailable and
-   `GEMINI_API_KEY` is set.
+2. **Fallback** — a vision model via the **BANKR LLM gateway** (default
+   `gemini-3.1-flash-lite`), only if claude is unavailable and `BANKR_API_KEY`
+   is set. BANKR is a different provider than the box's Claude, so it still
+   answers during a Claude-side outage.
 
 **The verdict is never the model's call for known species.** `danger.resolve`
 reads the app's `../GoodGuyBadGuy/LLM/DangerData.swift` (one source of truth,
@@ -69,7 +71,9 @@ Deploy an update: `git pull` in the repo, then
 | `GGBG_MODEL` | `sonnet` | claude model alias for classification |
 | `GGBG_CONCURRENCY` | `3` | max concurrent claude calls |
 | `DEBUG_STORE` | off | `1` keeps images + both classifiers' output |
-| `GEMINI_API_KEY` | — | enables the fallback classifier |
+| `BANKR_API_KEY` | — | enables the BANKR fallback classifier (`bk_…`) |
+| `BANKR_MODEL` | `gemini-3.1-flash-lite` | vision model for the fallback |
+| `BANKR_BASE_URL` | `https://llm.bankr.bot` | BANKR gateway base |
 
 ## Notes
 

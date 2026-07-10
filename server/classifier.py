@@ -8,8 +8,9 @@ renders it identically.
 Identification is tiered:
   1. **claude -p** on this box's Claude subscription — free, frontier-quality.
      It names the organism AND proposes a verdict/explanation.
-  2. **Fallback** cloud vision model (Gemini), only if claude is unavailable
-     and a key is configured.
+  2. **Fallback** cloud vision model via the **BANKR LLM gateway** (a different
+     provider than the box's Claude, so a Claude-side outage doesn't take the
+     whole service down), only if claude is unavailable and a key is configured.
 
 The **verdict** is never left to the model: `danger.resolve` overrides it with
 the curated danger list for any known species (this is what makes "daylily →
@@ -26,7 +27,9 @@ Pure stdlib. Config via env (see .env.example):
   GGBG_PORT    listen port (default 41821)
   GGBG_MODEL   claude model alias (default "sonnet")
   DEBUG_STORE  "1" to save images + both classifiers' output
-  GEMINI_API_KEY  enables the fallback classifier
+  BANKR_API_KEY   enables the BANKR fallback classifier (key starts with "bk_")
+  BANKR_MODEL     BANKR vision model for the fallback (default gemini-3.1-flash-lite)
+  BANKR_BASE_URL  BANKR gateway base (default https://llm.bankr.bot)
 """
 import hmac
 import json
@@ -49,7 +52,9 @@ TOKEN = os.environ.get("GGBG_TOKEN", "")
 PORT = int(os.environ.get("GGBG_PORT", "41821"))
 CLAUDE_MODEL = os.environ.get("GGBG_MODEL", "sonnet")
 DEBUG_STORE = os.environ.get("DEBUG_STORE", "") == "1"
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+BANKR_KEY = os.environ.get("BANKR_API_KEY", "")
+BANKR_MODEL = os.environ.get("BANKR_MODEL", "gemini-3.1-flash-lite")
+BANKR_BASE_URL = os.environ.get("BANKR_BASE_URL", "https://llm.bankr.bot")
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 # Protect the subscription: cap concurrent claude calls.
@@ -165,40 +170,49 @@ def classify_with_claude(image_path, timeout=90):
     return parsed
 
 
-def classify_with_gemini(image_path, mime, timeout=30):
-    """Fallback path: Gemini Flash-Lite. Only used if a key is configured."""
-    if not GEMINI_KEY:
+def classify_with_bankr(image_path, mime, timeout=45):
+    """Fallback path: a vision model via the BANKR LLM gateway (OpenAI-compatible).
+
+    Default model is a Gemini flash-lite — cheap, fast, vision-capable, and a
+    *different* provider than the box's Claude subscription, so it still answers
+    when the primary claude -p path is down. Only used if a key is configured.
+    """
+    if not BANKR_KEY:
         return {"error": "no fallback key configured"}
     import base64
 
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
+    data_uri = f"data:{mime};base64,{b64}"
     body = {
-        "contents": [{"parts": [
-            {"text": CLASSIFY_PROMPT.format(path="(the attached image)")},
-            {"inline_data": {"mime_type": mime, "data": b64}},
-        ]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300},
+        "model": BANKR_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": CLASSIFY_PROMPT.format(path="(the attached image)")},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+            ],
+        }],
+        "temperature": 0.2,
+        "max_tokens": 300,
     }
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.5-flash-lite:generateContent?key=" + GEMINI_KEY
-    )
     req = urllib.request.Request(
-        url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+        BANKR_BASE_URL.rstrip("/") + "/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "X-API-Key": BANKR_KEY},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except Exception as exc:  # noqa: BLE001 - report any failure as a soft error
-        return {"error": f"gemini request failed: {exc}"}
+        return {"error": f"bankr request failed: {exc}"}
     try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        return {"error": "gemini returned no text"}
+        text = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return {"error": "bankr returned no text"}
     parsed = _extract_json(text)
     if not parsed or "id" not in parsed:
-        return {"error": "could not parse a classification from gemini"}
+        return {"error": "could not parse a classification from bankr"}
     return parsed
 
 
@@ -279,7 +293,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {
                 "ok": True,
                 "claude_alive": claude_alive(),
-                "fallback_available": bool(GEMINI_KEY),
+                "fallback_available": bool(BANKR_KEY),
+                "fallback_model": BANKR_MODEL if BANKR_KEY else None,
                 "debug_store": DEBUG_STORE,
                 "danger_entries": len(danger.ENTRIES),
             })
@@ -322,10 +337,10 @@ class Handler(BaseHTTPRequestHandler):
             fallback_raw = None
             if DEBUG_STORE:
                 # Debug: run BOTH so we can compare, regardless of claude health.
-                fallback_raw = classify_with_gemini(image_path, ctype)
+                fallback_raw = classify_with_bankr(image_path, ctype)
             elif "error" in claude_raw:
                 # Production: only reach for the fallback when claude failed.
-                fallback_raw = classify_with_gemini(image_path, ctype)
+                fallback_raw = classify_with_bankr(image_path, ctype)
 
             chosen = claude_raw if "error" not in claude_raw else fallback_raw
             if not chosen or "error" in (chosen or {"error": 1}):
@@ -367,7 +382,8 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"ggbg-classifier on :{PORT}  model={CLAUDE_MODEL}  "
-          f"debug_store={DEBUG_STORE}  fallback={'on' if GEMINI_KEY else 'off'}  "
+          f"debug_store={DEBUG_STORE}  "
+          f"fallback={BANKR_MODEL if BANKR_KEY else 'off'}  "
           f"danger_entries={len(danger.ENTRIES)}", flush=True)
     server.serve_forever()
 
