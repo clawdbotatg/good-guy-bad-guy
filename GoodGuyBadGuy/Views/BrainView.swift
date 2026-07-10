@@ -94,20 +94,16 @@ struct BrainView: View {
                     .font(.title3)
                     .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                     .frame(width: 32)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(model.name).font(.subheadline.weight(.semibold))
-                        if model.recommended {
-                            Image(systemName: "star.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.yellow)
-                        }
+                HStack(spacing: 6) {
+                    Text(model.name).font(.subheadline.weight(.semibold))
+                    if model.recommended {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.yellow)
                     }
-                    Text(model.blurb)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(model.brainRating).font(.caption)
                 }
+                .lineLimit(1)
                 Spacer()
                 trailing(for: model, isCurrent: isCurrent)
             }

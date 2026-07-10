@@ -19,10 +19,13 @@ struct BrainModel: Identifiable, Equatable, Hashable {
     let name: String
     /// Approximate download / on-disk size.
     let sizeText: String
-    /// One line on when to pick it.
-    let blurb: String
+    /// Relative smarts, 1...4 — rendered as that many 🧠.
+    let brains: Int
     /// Shown with a star; also the default on first launch.
     let recommended: Bool
+
+    /// Brain rating as emoji, e.g. 3 → "🧠🧠🧠".
+    var brainRating: String { String(repeating: "🧠", count: max(1, brains)) }
 }
 
 enum BrainCatalog {
@@ -33,35 +36,35 @@ enum BrainCatalog {
             id: "lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit",
             name: "Qwen3-VL 4B",
             sizeText: "~2.7 GB",
-            blurb: "Sharpest all-rounder that fits a phone. The default brain.",
+            brains: 4,
             recommended: true
         ),
         BrainModel(
             id: "mlx-community/gemma-3-4b-it-qat-4bit",
             name: "Gemma 3 4B",
             sizeText: "~3.0 GB",
-            blurb: "Google's model — a second opinion from a different lineage.",
+            brains: 3,
             recommended: false
         ),
         BrainModel(
             id: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
             name: "Qwen2.5-VL 3B",
             sizeText: "~2.0 GB",
-            blurb: "A step smaller and faster, nearly as accurate.",
+            brains: 3,
             recommended: false
         ),
         BrainModel(
             id: "mlx-community/Qwen2-VL-2B-Instruct-4bit",
             name: "Qwen2-VL 2B",
             sizeText: "~1.4 GB",
-            blurb: "Smallest and fastest. Good on older phones; misses more IDs.",
+            brains: 2,
             recommended: false
         ),
         BrainModel(
             id: "mlx-community/SmolVLM-Instruct-4bit",
             name: "SmolVLM",
             sizeText: "~1.0 GB",
-            blurb: "Tiny and quick. Weakest at tricky identifications.",
+            brains: 1,
             recommended: false
         ),
     ]
