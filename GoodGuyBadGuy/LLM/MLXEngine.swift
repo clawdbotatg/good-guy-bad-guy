@@ -104,17 +104,19 @@ final class MLXEngine: LLMEngine {
             // Qwen's recommended sampling for instruct models; the repetition
             // penalty stops the degenerate "2023 and 2024. 2023 and 2024. …"
             // loops a 4-bit 4B model falls into after tool-result injection.
-            // The context window must exceed a full verdict (~70 tokens) or a
-            // whole-answer loop slides out of it before the penalty can bite;
-            // maxTokens is the hard stop when EOS never fires (verdicts are
-            // ≤3 sentences, so 250 is generous). See loopCutIndex for the
-            // third layer.
+            // Keep the window at 64: at 128 the format's own "VERDICT" (from
+            // the think block / earlier context) is still in-window when the
+            // answer starts, the penalty vetoes completing the word, and the
+            // model stutters "VERD\nVERD\nVERD" (seen on device 2026-07-09).
+            // Whole-answer restart loops are longer than this window by
+            // design — loopCutIndex cuts those deterministically, and
+            // maxTokens is the hard stop when EOS never fires.
             generateParameters: GenerateParameters(
                 maxTokens: 250,
                 temperature: 0.7,
                 topP: 0.8,
                 repetitionPenalty: 1.15,
-                repetitionContextSize: 128
+                repetitionContextSize: 64
             ),
             tools: PhoneTools.specs + MoreTools.specs,
             toolDispatch: { call in
