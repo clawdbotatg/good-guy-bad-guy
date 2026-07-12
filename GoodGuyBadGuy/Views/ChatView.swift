@@ -30,8 +30,8 @@ struct ChatView: View {
             if ProcessInfo.processInfo.environment["GGBG_DEMO"] != nil,
                 store.messages.isEmpty
             {
-                // Bundled daylily art (tools/daylily.svg) so demo screenshots
-                // show a plausible photo; green square if the asset is missing.
+                // Bundled photorealistic daylily photo so demo runs feed the
+                // model a real-looking picture; green square if it's missing.
                 let image =
                     UIImage(named: "DemoPhoto")
                     ?? UIGraphicsImageRenderer(size: .init(width: 240, height: 240))
