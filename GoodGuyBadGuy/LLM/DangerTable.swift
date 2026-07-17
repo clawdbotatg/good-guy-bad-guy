@@ -86,6 +86,33 @@ enum DangerTable {
         return displayName(line)
     }
 
+    /// The reply as danger-table matching input: echoed template lines
+    /// dropped, everything else kept.
+    ///
+    /// The naming pass asks for "the name only", but a 4-bit 4B model often
+    /// captions instead: "This is a close-up photograph of a **spitting
+    /// cobra** (likely *Naja* species…". Rejecting that reply for not being a
+    /// clean name is how all three of App Review's scans (cobra, snake,
+    /// jumping spider — iPad, 2026-07-16) came back "couldn't identify" while
+    /// the species sat right there in the text. Matching is word-boundary
+    /// over the whole reply, so the caption is perfectly good input.
+    static func matchText(_ reply: String) -> String? {
+        let text = stripEchoedTemplate(reply)
+        return text.isEmpty ? nil : text
+    }
+
+    /// Display name when the reply wasn't a clean short answer: the alias the
+    /// caption's best table match fired on. Never model prose — always one of
+    /// our own curated names.
+    static func matchedName(in reply: String) -> String? {
+        guard let text = matchText(reply), let best = bestMatch(in: text) else { return nil }
+        let alias =
+            best.entry.names
+            .filter { contains(text, word: $0) }
+            .max(by: { $0.count < $1.count }) ?? best.entry.names[0]
+        return alias.prefix(1).uppercased() + alias.dropFirst()
+    }
+
     /// True when the model hedged its identification.
     static func isHedged(_ reply: String) -> Bool {
         ["uncertain", "not sure", "unknown", "possibly", "might be"].contains {

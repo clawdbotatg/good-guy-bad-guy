@@ -121,11 +121,28 @@ def verdict(entries, name, category=None, hedged=False):
     return "GOOD"
 
 
+def match_text(reply):
+    """Mirrors matchText: drop echoed-template lines, keep everything else.
+
+    The naming pass asks for a bare name but the model often captions
+    ("This is a close-up photograph of a **spitting cobra**…"). The WHOLE
+    reply is matching input — rejecting it for not being a clean name is how
+    App Review's three scans came back "couldn't identify" (2026-07-16).
+    """
+    lines = [
+        l for l in reply.split("\n")
+        if "<" not in l and ">" not in l and not re.search("one of:", l, re.I)
+    ]
+    text = "\n".join(lines).strip()
+    return text or None
+
+
 def pipeline(entries, raw_name, category=None):
-    """The whole post-model path: sanitize the naming pass, then judge."""
+    """The whole post-model path: think-tags out, match the full reply, judge."""
+    raw_name = raw_name.replace("<think>", " ").replace("</think>", " ")
     if re.search("not a plant or animal", raw_name, re.I):
         return "NONE"
-    return verdict(entries, sanitize_name(raw_name), category, is_hedged(raw_name))
+    return verdict(entries, match_text(raw_name), category, is_hedged(raw_name))
 
 
 # (raw naming-pass reply, category from pass 2 (or None), expected, why)
@@ -193,6 +210,25 @@ CASES = [
     # A table entry whose category is mushroom must never be GOOD even if the
     # danger pass mislabels the category.
     ("Chanterelle", "plant", "CAUTION", "mushroom rule keys off the entry, not just the pass"),
+
+    # The App Review rejection (iPad, 2026-07-16). These are VERBATIM replies
+    # from the real model given the reviewer's own photos (Mac repro, same
+    # weights + sampling): it captions instead of naming, and the old
+    # first-line-under-60-chars parse turned every one into "couldn't
+    # identify". The full reply is matching input now.
+    ("This is a close-up photograph of a **spitting cobra** (likely *Naja* species, "
+     "such as the Indian spitting cobra or Egyptian", None, "BAD",
+     "reviewer's cobra scan: species is in the caption, must match"),
+    ("This is a **king cobra** (*Ophiophagus hannah*), one of the world’s largest "
+     "and most dangerous snakes.\n\nKey features visible in", None, "BAD",
+     "caption + newlines + truncation must still match"),
+    ("This is a **jumping spider** (family Salticidae), a small arachnid with large "
+     "front-facing eyes", None, "GOOD", "reviewer's spider scan via caption match"),
+    ("<think>\nThe photo shows a king cobra with its hood spread", None, "BAD",
+     "an unclosed think-block still names the animal it reasons about"),
+    ("Like: House sparrow. Or: Goldfish. Or: Maple tree.", "other", "CAUTION",
+     "echoed prompt examples must never fire a table entry"),
+    ("", None, "CAUTION", "empty generation (the 12MP failure) fails to caution"),
 ]
 
 

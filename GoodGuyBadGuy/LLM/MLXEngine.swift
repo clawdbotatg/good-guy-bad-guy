@@ -16,14 +16,17 @@ import Tokenizers
 /// **A photo is answered in two minimal passes, never one big one.**
 ///
 /// 1. *Name it.* Image + a one-line prompt: "in very few words, what is
-///    this?" Nothing else — no format, no categories, no safety talk. The
-///    answer goes straight to the screen. Asking a 4B model to identify an
-///    animal *and* fill in a `CATEGORY:/ID:/FEATURES:` template in one shot
-///    degrades both jobs: it parroted the template back and stopped naming
-///    things it had previously named correctly (device, 2026-07-09).
-/// 2. *Judge it.* `DangerTable` looks the name up. Only if the species isn't
-///    in the table does the model get a second, equally tiny question — one
-///    word for the category — which selects the safe default.
+///    this?" Nothing else — no format, no categories, no safety talk. Asking
+///    a 4B model to identify an animal *and* fill in a template in one shot
+///    degrades both jobs (device, 2026-07-09). The model often replies with a
+///    caption instead of a bare name anyway, so the WHOLE reply is matched
+///    against the danger table, and the screen shows either a clean short
+///    answer or the curated alias the caption matched (App Review, 2026-07-16:
+///    demanding a bare name turned three correct identifications into
+///    "couldn't identify").
+/// 2. *Judge it.* `DangerTable` looks the reply up. Only if nothing matches
+///    does the model get a second, equally tiny question — one word for the
+///    category — which selects the safe default.
 ///
 /// The model is the eyes; the table is the encyclopedia. It once called a
 /// daylily "safe for cats", which is lethally wrong, so it is never asked.
@@ -52,12 +55,16 @@ final class MLXEngine: LLMEngine {
     }
 
     /// Pass 1. As little context as possible: look, and name it.
+    ///
+    /// The example names are deliberately species that do NOT appear in
+    /// `DangerData` — the whole reply is danger-table matching input now, so
+    /// an echoed example must never be able to fire a table entry.
     private static let nameInstructions = """
         Look at the photo and name the animal, plant, or mushroom in it.
 
         Answer with the name only — no sentence, no punctuation, no \
-        explanation. Two to six words. Like: Leopard gecko. Or: Cellar \
-        spider. Or: Daylily.
+        explanation. Two to six words. Like: House sparrow. Or: Goldfish. \
+        Or: Maple tree.
 
         If it is not a living thing, answer: not a plant or animal
         If you truly cannot tell, answer: unknown
@@ -145,13 +152,14 @@ final class MLXEngine: LLMEngine {
     /// answer, not reach for the phone.
     private func makeSession(
         _ container: ModelContainer, instructions: String, maxTokens: Int,
-        withTools: Bool = false
+        temperature: Float = 0.7, withTools: Bool = false
     ) -> ChatSession {
         ChatSession(
             container,
             instructions: instructions,
-            // Qwen's recommended sampling for instruct models; the repetition
-            // penalty stops the degenerate "2023 and 2024. 2023 and 2024. …"
+            // Qwen's recommended sampling for instruct models (identification
+            // passes run cooler — see `identify`); the repetition penalty
+            // stops the degenerate "2023 and 2024. 2023 and 2024. …"
             // loops a 4-bit 4B model falls into. Keep the window at 64: at 128
             // a keyword the answer needs is still in-window when it starts,
             // the penalty vetoes completing the word, and the model stutters
@@ -159,7 +167,7 @@ final class MLXEngine: LLMEngine {
             // never fires.
             generateParameters: GenerateParameters(
                 maxTokens: maxTokens,
-                temperature: 0.7,
+                temperature: temperature,
                 topP: 0.8,
                 repetitionPenalty: 1.15,
                 repetitionContextSize: 64
@@ -213,9 +221,17 @@ final class MLXEngine: LLMEngine {
             Task { @MainActor in
                 do {
                     // ---- Pass 1: what is it? ----
-                    let reply = try await self.ask(
+                    // maxTokens must leave room for the model to FINISH: it
+                    // often ignores "name only" and captions ("This is a
+                    // close-up photograph of a **spitting cobra**…"). At 32
+                    // that caption was cut mid-sentence and the name pass
+                    // looked like a failure — the App Review rejection
+                    // (2026-07-16). Cooler temperature for the same reason:
+                    // identification is a lookup, not a chat.
+                    let raw = try await self.ask(
                         instructions: Self.nameInstructions, prompt: "What is this?",
-                        image: image, maxTokens: 32, container: container)
+                        image: image, maxTokens: 96, temperature: 0.2, container: container)
+                    let reply = Self.stripThinking(raw)
                     DebugLog.log("name pass: \(reply.debugDescription)")
 
                     if DangerTable.isNotAnOrganism(reply) {
@@ -227,7 +243,17 @@ final class MLXEngine: LLMEngine {
                         return
                     }
 
-                    let name = DangerTable.sanitizeName(reply)
+                    // Everything the model wrote is matching input — even an
+                    // unclosed think-block names the animal it is reasoning
+                    // about. Only the tags themselves are removed.
+                    let matchText = DangerTable.matchText(
+                        raw.replacingOccurrences(of: "<think>", with: " ")
+                            .replacingOccurrences(of: "</think>", with: " "))
+                    // Shown to the user: a clean short answer if we got one,
+                    // else the curated alias the caption matched.
+                    let name =
+                        DangerTable.sanitizeName(reply)
+                        ?? DangerTable.matchedName(in: matchText ?? "")
                     let hedged = DangerTable.isHedged(reply)
 
                     // Show the identification immediately — the user asked
@@ -236,16 +262,17 @@ final class MLXEngine: LLMEngine {
 
                     // ---- Pass 2: how dangerous is it? ----
                     // The table answers directly for anything it knows. Only
-                    // an unknown name needs the model's category, and only to
-                    // pick the safe default.
+                    // an unmatched reply needs the model's category, and only
+                    // to pick the safe default.
                     var category: String?
-                    if let name, DangerTable.lookup(name: name) == nil {
-                        category = try await self.categorize(name, image: image, container: container)
+                    if let matchText, DangerTable.lookup(name: matchText) == nil {
+                        category = try await self.categorize(
+                            name, image: image, container: container)
                         DebugLog.log("category pass: \(category ?? "nil")")
                     }
 
                     let result = DangerTable.verdict(
-                        name: name, category: category, hedged: hedged)
+                        name: matchText, category: category, hedged: hedged)
                     DebugLog.log(
                         "id=\(name ?? "none") verdict=\(result.verdict.map(String.init(describing:)) ?? "none")")
                     continuation.yield(result.text)
@@ -265,31 +292,38 @@ final class MLXEngine: LLMEngine {
         }
     }
 
-    /// One-word category, used only to pick the safe default for a name the
+    /// One-word category, used only to pick the safe default for a reply the
     /// danger table doesn't know.
-    private func categorize(_ name: String, image: CIImage, container: ModelContainer)
+    private func categorize(_ name: String?, image: CIImage, container: ModelContainer)
         async throws -> String?
     {
+        let prompt =
+            if let name { "This looks like: \(name). Which one word describes it?" } else {
+                "Which one word describes what is in the photo?"
+            }
         let reply = try await ask(
-            instructions: Self.categoryInstructions,
-            prompt: "This looks like: \(name). Which one word describes it?",
-            image: image, maxTokens: 8, container: container)
-        let word = DangerTable.firstMeaningfulLine(reply)?
+            instructions: Self.categoryInstructions, prompt: prompt,
+            image: image, maxTokens: 8, temperature: 0.2, container: container)
+        let word = DangerTable.firstMeaningfulLine(Self.stripThinking(reply))?
             .lowercased()
             .trimmingCharacters(in: CharacterSet.letters.inverted)
         return word.flatMap { DangerTable.categories.contains($0) ? $0 : nil }
     }
 
     /// Run one short, tool-free, history-free question against the photo.
+    /// Returns the raw reply — think-blocks and all; the caller decides what
+    /// to strip and what to mine.
     private func ask(
         instructions: String, prompt: String, image: CIImage, maxTokens: Int,
-        container: ModelContainer
+        temperature: Float, container: ModelContainer
     ) async throws -> String {
-        let session = makeSession(container, instructions: instructions, maxTokens: maxTokens)
+        let session = makeSession(
+            container, instructions: instructions, maxTokens: maxTokens,
+            temperature: temperature)
         let message = Chat.Message.user(prompt, images: [.ciImage(image)])
         var raw = ""
         for try await chunk in session.streamResponse(to: [message]) { raw += chunk }
-        return Self.stripThinking(raw)
+        return raw
     }
 
     // MARK: text follow-ups

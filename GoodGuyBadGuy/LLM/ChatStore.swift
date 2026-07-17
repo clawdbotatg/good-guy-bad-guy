@@ -198,7 +198,7 @@ final class ChatStore {
         messages.append(ChatMessage(role: .assistant, text: ""))
         let index = messages.count - 1
         isGenerating = true
-        let ciImage = image.flatMap { CIImage(image: $0) }
+        let ciImage = image.flatMap { Self.modelImage(from: $0) }
         DebugLog.log("send: \"\(prompt)\"\(image != nil ? " +image" : "") via \(engine.modelName)")
 
         generationTask = Task {
@@ -219,6 +219,33 @@ final class ChatStore {
 
     func stopGenerating() {
         generationTask?.cancel()
+    }
+
+    /// Prepare a photo for the model: draw it upright and capped in size.
+    ///
+    /// Two field failures live here (App Review, iPad, 2026-07-16 — all three
+    /// of the reviewer's scans came back "couldn't identify"):
+    /// - `CIImage(image:)` ignores `UIImage.imageOrientation`, so portrait
+    ///   camera shots reached the model rotated 90°.
+    /// - An unscaled 12MP camera photo is ~4k vision tokens; at that size the
+    ///   4-bit model's replies degrade to rambling or outright empty
+    ///   (reproduced with the same weights on a Mac).
+    /// Drawing through UIGraphicsImageRenderer fixes both: it bakes the
+    /// orientation in and resamples to a size the model handles well.
+    private static let maxImageSide: CGFloat = 1280
+
+    private static func modelImage(from image: UIImage) -> CIImage? {
+        let longest = max(image.size.width, image.size.height)
+        let scale = min(1, maxImageSide / max(longest, 1))
+        let target = CGSize(
+            width: (image.size.width * scale).rounded(),
+            height: (image.size.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let drawn = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+        return CIImage(image: drawn)
     }
 
     /// New conversation: drop UI messages and the engine's history.
