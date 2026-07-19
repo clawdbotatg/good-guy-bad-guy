@@ -182,6 +182,17 @@ CASES = [
     ("Chanterelle", "mushroom", "CAUTION", "wild mushrooms are never GOOD, even edibles"),
     ("Some snake I cannot place", "snake", "CAUTION", "unmatched snake is never GOOD"),
     ("A weed of some kind", "plant", "CAUTION", "unmatched plant is never GOOD"),
+    # Poison-ivy classifier classes (2026-07-18): the 12 trained species must
+    # resolve correctly through the table the classifier feeds.
+    ("Poison sumac", "plant", "BAD", "wet-bog rash plant, distinct from staghorn"),
+    ("Virginia creeper", "plant", "GOOD", "five-leaflet poison-ivy look-alike"),
+    ("Box elder", "plant", "GOOD", "opposite-leaf poison-ivy look-alike"),
+    ("Bramble", "plant", "GOOD", "thorny poison-ivy look-alike"),
+    ("Fragrant sumac", "plant", "GOOD", "Rhus, not the rash-causing Toxicodendron"),
+    ("Staghorn sumac", "plant", "GOOD", "harmless roadside shrub, not poison sumac"),
+    ("Jack-in-the-pulpit", "plant", "GOOD", "three-leaflet woodland look-alike"),
+    ("Hog peanut", "plant", "GOOD", "three-leaflet native vine look-alike"),
+    ("Virginia creeper (uncertain)", "plant", "CAUTION", "hedged look-alike is downgraded"),
     ("Small brown bird", "bird", "GOOD", "unmatched bird defaults GOOD"),
     ("Eastern gray squirrel", "mammal", "GOOD", "unmatched mammal defaults GOOD"),
     ("Some little beetle", "insect", "GOOD", "unmatched insect defaults GOOD"),

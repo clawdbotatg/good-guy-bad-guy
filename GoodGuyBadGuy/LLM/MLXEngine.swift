@@ -98,6 +98,13 @@ final class MLXEngine: LLMEngine {
         """
     }
 
+    /// Fast, accurate first look for the plants people get hurt by. Runs
+    /// before the VLM and, when confident, decides the verdict on its own via
+    /// `DangerTable`; a low-confidence or non-plant photo falls through to the
+    /// VLM (see `identify`). Nil if the bundled model is missing — then every
+    /// photo just uses the VLM, as before.
+    private let plantClassifier = PlantClassifier()
+
     private var container: ModelContainer?
     /// Conversation so far (user + assistant turns, think-blocks stripped).
     /// Kept here because each turn runs in a FRESH ChatSession — reusing a
@@ -220,6 +227,36 @@ final class MLXEngine: LLMEngine {
         AsyncThrowingStream { continuation in
             Task { @MainActor in
                 do {
+                    // ---- Fast path: the on-device plant classifier ----
+                    // For poison ivy / oak / sumac and their common harmless
+                    // look-alikes, a purpose-trained Core ML model is more
+                    // accurate than the 4B VLM. When it's confident enough
+                    // (PlantRoute), it names the plant and the table decides;
+                    // otherwise we fall through to the VLM for snakes, spiders,
+                    // other creatures, and uncertain plants.
+                    if let classifier = self.plantClassifier,
+                        let p = classifier.classify(image)
+                    {
+                        let route = PlantRoute.decide(p)
+                        DebugLog.log(
+                            "plant classifier: \(p.commonName) conf=\(p.confidence) bad=\(p.isDangerous) use=\(route.use) hedged=\(route.hedged)"
+                        )
+                        if route.use {
+                            let display =
+                                p.commonName.prefix(1).uppercased() + p.commonName.dropFirst()
+                            continuation.yield("ID: \(display)\n")
+                            let result = DangerTable.verdict(
+                                name: p.commonName, category: "plant", hedged: route.hedged)
+                            continuation.yield(result.text)
+                            self.history = [
+                                .user("[photo of a plant the user found]"),
+                                .assistant("ID: \(display)\n\(result.text)"),
+                            ]
+                            continuation.finish()
+                            return
+                        }
+                    }
+
                     // ---- Pass 1: what is it? ----
                     // maxTokens must leave room for the model to FINISH: it
                     // often ignores "name only" and captions ("This is a

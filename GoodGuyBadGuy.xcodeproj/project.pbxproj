@@ -10,6 +10,7 @@
 		06D472B13AD3E76F6B7C76F8 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = CAFB5BD214778C30A58F864F /* MLXVLM */; };
 		0B5FC45D16F3DE2FC2057A2C /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 3F21D35FE053E80790629758 /* MLXLMCommon */; };
 		0CF144AD4C6B2ACAEFA17DF7 /* BrainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24A554E68A45977EA030BADC /* BrainView.swift */; };
+		1481F2FAC122CBAB9F7470DE /* PlantClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB459B81DD42141287428EA /* PlantClassifier.swift */; };
 		1EF5037425384FD3CE4BD245 /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 522A8E1F03BB7C62680271D9 /* HuggingFace */; };
 		28022D78B3BE30B1C92B831F /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68C1146AE32C56A4752EEF9B /* MessageBubble.swift */; };
 		2F7E0F03BF189E760DF02C26 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9B6ED9A7D5DD185AC6E0BE7F /* Assets.xcassets */; };
@@ -31,6 +32,7 @@
 		AD83F2ABB9E51B0C4B373E7F /* GoodGuyBadGuyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F0ECFF5BA578C1103432B88 /* GoodGuyBadGuyApp.swift */; };
 		B66EEA05EC9A4E9507E2BF90 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2FE31FFB535D9CABA26D57 /* ChatStore.swift */; };
 		B6A6FCDA4D5014605B0FAEE2 /* MLXEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D9AD8DF513D954D6FF1C6F3 /* MLXEngine.swift */; };
+		DCA21DD6515E5E5E51D202CB /* PoisonIvyClassifier.mlmodel in Sources */ = {isa = PBXBuildFile; fileRef = E7B0ECB846BEF31BD865C993 /* PoisonIvyClassifier.mlmodel */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,8 +53,10 @@
 		A7F9371BFBDB987EC7A11459 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
 		B0CA79CC52C8E1002A94105B /* GoodGuyBadGuy.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GoodGuyBadGuy.entitlements; sourceTree = "<group>"; };
 		B5BEC1D74A7489159412622C /* CameraPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPicker.swift; sourceTree = "<group>"; };
+		BBB459B81DD42141287428EA /* PlantClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlantClassifier.swift; sourceTree = "<group>"; };
 		BDE2068A531901E5694F2710 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		D110805D05D0582BD9A34A4E /* MoreTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreTools.swift; sourceTree = "<group>"; };
+		E7B0ECB846BEF31BD865C993 /* PoisonIvyClassifier.mlmodel */ = {isa = PBXFileReference; lastKnownFileType = file.mlmodel; path = PoisonIvyClassifier.mlmodel; sourceTree = "<group>"; };
 		F4A32078779DBCF2C682CC56 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F60F43DACEAE670B2323F170 /* DangerData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DangerData.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -85,6 +89,7 @@
 				0FFFA87AD63CDE9148C66B5B /* PrivacyInfo.xcprivacy */,
 				513029C492554C8B1BD707E6 /* LLM */,
 				15CCC1140112639174C637D9 /* Models */,
+				DC40F9D4BB601BA6B459EC91 /* Resources */,
 				0E40BAACD94ECFA13E1AC3A1 /* Speech */,
 				B25CC56D97B30DD47C54063E /* Views */,
 			);
@@ -126,6 +131,7 @@
 				9D9AD8DF513D954D6FF1C6F3 /* MLXEngine.swift */,
 				D110805D05D0582BD9A34A4E /* MoreTools.swift */,
 				5D8DF9483E37B11A6358E1A2 /* PhoneTools.swift */,
+				BBB459B81DD42141287428EA /* PlantClassifier.swift */,
 			);
 			path = LLM;
 			sourceTree = "<group>";
@@ -147,6 +153,14 @@
 				5E859DBA326203318BE731B2 /* GoodGuyBadGuy.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		DC40F9D4BB601BA6B459EC91 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				E7B0ECB846BEF31BD865C993 /* PoisonIvyClassifier.mlmodel */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -247,6 +261,8 @@
 				28022D78B3BE30B1C92B831F /* MessageBubble.swift in Sources */,
 				5E7F14CB01E5D228255BF425 /* MoreTools.swift in Sources */,
 				72938E55ECB0C5504A28EEC4 /* PhoneTools.swift in Sources */,
+				1481F2FAC122CBAB9F7470DE /* PlantClassifier.swift in Sources */,
+				DCA21DD6515E5E5E51D202CB /* PoisonIvyClassifier.mlmodel in Sources */,
 				35DCBFB3CBFB8AC201431627 /* SpeechRecognizer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

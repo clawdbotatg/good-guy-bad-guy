@@ -9,3 +9,13 @@ __pycache__/
 # Server runtime / secrets / debug data
 server/.env
 server/data/
+
+# Training data (large, CC-licensed, not ours to redistribute)
+training/dataset/
+
+# Training artifacts (regenerable / large)
+training/testset/
+training/*.log
+training/confusion.csv
+training/predictions.csv
+training/PoisonIvyClassifier.mlmodel

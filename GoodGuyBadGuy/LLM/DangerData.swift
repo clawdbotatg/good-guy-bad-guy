@@ -52,6 +52,34 @@ extension DangerTable {
          "category":"plant","verdict":"bad",
          "note":"More potent than poison ivy; causes a severe blistering rash. Grows in wet, boggy ground. Do not touch or burn."},
 
+        {"names":["virginia creeper","parthenocissus quinquefolia","woodbine"],
+         "category":"plant","verdict":"good",
+         "note":"A harmless poison-ivy look-alike. The tell: five leaflets radiating from one point, not poison ivy's three. Safe to be around, but don't eat the blue-black berries — they're mildly toxic if swallowed."},
+
+        {"names":["box elder","boxelder","acer negundo"],
+         "category":"plant","verdict":"good",
+         "note":"A harmless native maple whose seedlings mimic poison ivy. The tell: box elder leaves grow in opposite pairs on the stem, while poison ivy's are staggered (alternate). Not toxic to touch."},
+
+        {"names":["bramble","brambles"],
+         "category":"plant","verdict":"good",
+         "note":"A harmless blackberry/raspberry relative, sometimes mistaken for poison ivy. The tell: brambles have thorns or prickles on the stems — poison ivy never does. Watch the thorns, but it won't give you a rash."},
+
+        {"names":["fragrant sumac","rhus aromatica"],
+         "category":"plant","verdict":"good",
+         "note":"A harmless shrub with leaves of three that people confuse with poison ivy and poison oak. It's a different genus (Rhus, not the rash-causing Toxicodendron) and does not cause a rash."},
+
+        {"names":["staghorn sumac","rhus typhina"],
+         "category":"plant","verdict":"good",
+         "note":"A harmless roadside shrub, not poison sumac. The tell: staghorn sumac has upright, cone-shaped clusters of fuzzy red berries, while poison sumac has drooping white-green berries and grows only in wet bogs."},
+
+        {"names":["jack-in-the-pulpit","jack in the pulpit","arisaema triphyllum","arisaema"],
+         "category":"plant","verdict":"good",
+         "note":"A harmless woodland wildflower with three leaflets that gets mistaken for poison ivy. Safe to be around and touch, but don't eat any part — it contains calcium-oxalate crystals that burn the mouth."},
+
+        {"names":["hog peanut","hog-peanut","amphicarpaea bracteata","amphicarpaea"],
+         "category":"plant","verdict":"good",
+         "note":"A harmless native vine with leaves of three, a common poison-ivy look-alike. It has delicate pale flowers and does not cause a rash."},
+
         {"names":["giant hogweed","heracleum mantegazzianum"],
          "category":"plant","verdict":"bad",
          "note":"Sap plus sunlight causes third-degree chemical burns and can blind you if it reaches the eyes. Do not touch it; if sap contacts skin, wash it off, keep the area out of sunlight, and see a doctor."},
