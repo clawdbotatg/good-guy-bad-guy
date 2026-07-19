@@ -25,9 +25,10 @@ let data = MLImageClassifier.DataSource.labeledDirectories(at: dataDir)
 
 // Augmentation matters a lot for a few-hundred-per-class dataset: it teaches the
 // model that a rotated / cropped / differently-lit leaf is the same plant.
+let iterations = ProcessInfo.processInfo.environment["ITERS"].flatMap { Int($0) } ?? 25
 let params = MLImageClassifier.ModelParameters(
     validation: .split(strategy: .automatic),
-    maxIterations: 25,
+    maxIterations: iterations,
     augmentation: [.crop, .rotation, .blur, .flip, .exposure]
 )
 

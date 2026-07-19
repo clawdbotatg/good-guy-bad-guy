@@ -5,16 +5,9 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
-packages:
-  mlx-swift-lm:
-    url: https://github.com/ml-explore/mlx-swift-lm
-    from: 3.31.3
-  swift-huggingface:
-    url: https://github.com/huggingface/swift-huggingface
-    from: 0.9.0
-  swift-transformers:
-    url: https://github.com/huggingface/swift-transformers
-    from: 1.3.0
+# The app is now a pure on-device Core ML image classifier — no MLX, no VLM,
+# no model download. Vision + CoreML are system frameworks, so there are no
+# third-party package dependencies at all.
 
 targets:
   GoodGuyBadGuy:
@@ -22,19 +15,6 @@ targets:
     platform: iOS
     sources:
       - GoodGuyBadGuy
-    dependencies:
-      - package: mlx-swift-lm
-        product: MLXLLM
-      - package: mlx-swift-lm
-        product: MLXVLM
-      - package: mlx-swift-lm
-        product: MLXLMCommon
-      - package: mlx-swift-lm
-        product: MLXHuggingFace
-      - package: swift-huggingface
-        product: HuggingFace
-      - package: swift-transformers
-        product: Tokenizers
     info:
       path: GoodGuyBadGuy/Info.plist
       properties:

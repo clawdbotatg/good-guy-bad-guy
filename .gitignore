@@ -19,3 +19,8 @@ training/*.log
 training/confusion.csv
 training/predictions.csv
 training/PoisonIvyClassifier.mlmodel
+
+.venv/
+training/.venv/
+embeddings*.npz
+training/*.mlpackage
