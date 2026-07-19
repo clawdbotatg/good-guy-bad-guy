@@ -49,19 +49,31 @@ struct PlantClassifier {
         #if targetEnvironment(simulator)
         // The simulator has no Neural Engine; letting Core ML try to use it
         // fails with "Failed to create espresso context". CPU-only works
-        // everywhere and, for a ~70 KB classifier, is still instant.
+        // everywhere and, for a small classifier, is still fast.
         config.computeUnits = .cpuOnly
         #endif
         guard
-            let url = Bundle.main.url(
-                forResource: "PoisonIvyBioCLIP", withExtension: "mlmodelc"),
+            let url = Self.modelURL(),
             let ml = try? MLModel(contentsOf: url, configuration: config),
             let vn = try? VNCoreMLModel(for: ml)
         else {
-            DebugLog.log("PlantClassifier: model not found in bundle")
+            DebugLog.log("PlantClassifier: model not found")
             return nil
         }
         model = vn
+    }
+
+    /// The compiled model. In the app it's bundled; a headless test harness on
+    /// macOS can set GGBG_MODEL_PATH to a `.mlmodelc` (or a `.mlpackage`, which
+    /// is compiled on the fly) to run the exact classify + verdict path off
+    /// device — see `tools/app_probe.sh`. Env var is never set in the shipped
+    /// app, so production always loads from the bundle.
+    private static func modelURL() -> URL? {
+        if let path = ProcessInfo.processInfo.environment["GGBG_MODEL_PATH"] {
+            let url = URL(fileURLWithPath: path)
+            return url.pathExtension == "mlmodelc" ? url : try? MLModel.compileModel(at: url)
+        }
+        return Bundle.main.url(forResource: "PoisonIvyBioCLIP", withExtension: "mlmodelc")
     }
 
     /// Top prediction for a photo, or nil if inference failed or the label
